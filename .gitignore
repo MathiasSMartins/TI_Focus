@@ -1,0 +1,22 @@
+# Dependencies and builds
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Editors and operating systems
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Logs and Firebase emulator artifacts
+*.log
+npm-debug.log*
+firestore-debug.log
+firebase-debug.log*
+.firebase/
