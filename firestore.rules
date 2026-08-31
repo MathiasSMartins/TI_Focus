@@ -1,0 +1,532 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidArea(area) {
+      return area == 'information-security'
+        || area == 'software-development'
+        || area == 'infrastructure'
+        || area == 'support'
+        || area == 'devops-sre'
+        || area == 'data-analytics'
+        || area == 'cloud'
+        || area == 'qa-testing'
+        || area == 'it-project-management'
+        || area == 'networks'
+        || area == 'database'
+        || area == 'other';
+    }
+
+    function isValidPrimaryObjective(objective) {
+      return objective == 'organize-work'
+        || objective == 'improve-focus'
+        || objective == 'build-routine'
+        || objective == 'increase-productivity'
+        || objective == 'meet-goals'
+        || objective == 'all';
+    }
+
+    function hasValidSecondaryAreas(areas, primaryArea) {
+      return areas is list
+        && areas.size() <= 5
+        && areas.size() == areas.toSet().size()
+        && (primaryArea == null || !areas.toSet().hasAny([primaryArea]))
+        && areas.toSet().difference([
+          'information-security',
+          'software-development',
+          'infrastructure',
+          'support',
+          'devops-sre',
+          'data-analytics',
+          'cloud',
+          'qa-testing',
+          'it-project-management',
+          'networks',
+          'database',
+          'other'
+        ].toSet()).size() == 0;
+    }
+
+    function hasValidSettings(settings) {
+      return settings is map
+        && settings.keys().hasOnly([
+          'timezone',
+          'locale',
+          'pomodoro',
+          'notifications'
+        ])
+        && settings.keys().hasAll([
+          'timezone',
+          'locale',
+          'pomodoro',
+          'notifications'
+        ])
+        && settings.timezone is string
+        && settings.timezone.size() > 0
+        && settings.timezone.size() <= 64
+        && settings.locale == 'pt-BR'
+        && settings.pomodoro is map
+        && settings.pomodoro.keys().hasOnly([
+          'focusMinutes',
+          'shortBreakMinutes',
+          'longBreakMinutes',
+          'cyclesBeforeLongBreak'
+        ])
+        && settings.pomodoro.focusMinutes is int
+        && settings.pomodoro.focusMinutes >= 1
+        && settings.pomodoro.focusMinutes <= 120
+        && settings.pomodoro.shortBreakMinutes is int
+        && settings.pomodoro.shortBreakMinutes >= 1
+        && settings.pomodoro.shortBreakMinutes <= 30
+        && settings.pomodoro.longBreakMinutes is int
+        && settings.pomodoro.longBreakMinutes >= 1
+        && settings.pomodoro.longBreakMinutes <= 60
+        && settings.pomodoro.cyclesBeforeLongBreak is int
+        && settings.pomodoro.cyclesBeforeLongBreak >= 1
+        && settings.pomodoro.cyclesBeforeLongBreak <= 12
+        && settings.notifications is map
+        && settings.notifications.keys().hasOnly(['inApp', 'push'])
+        && settings.notifications.inApp is bool
+        && settings.notifications.push is bool;
+    }
+
+    function isValidProjectStatus(status) {
+      return status == 'planning'
+        || status == 'in-progress'
+        || status == 'paused'
+        || status == 'completed'
+        || status == 'archived';
+    }
+
+    function hasValidProjectShape() {
+      let data = request.resource.data;
+      return data.keys().hasOnly([
+          'name',
+          'description',
+          'status',
+          'dueAt',
+          'category',
+          'investedMinutes',
+          'createdAt',
+          'updatedAt',
+          'archivedAt',
+          'deletedAt'
+        ])
+        && data.keys().hasAll([
+          'name',
+          'description',
+          'status',
+          'dueAt',
+          'category',
+          'investedMinutes',
+          'createdAt',
+          'updatedAt',
+          'archivedAt',
+          'deletedAt'
+        ])
+        && data.name is string
+        && data.name.size() > 0
+        && data.name.size() <= 120
+        && data.name.matches('.*\\S.*')
+        && isValidOptionalTaskText(data.description, 5000)
+        && isValidProjectStatus(data.status)
+        && (data.dueAt == null || data.dueAt is timestamp)
+        && isValidOptionalTaskText(data.category, 80)
+        && data.investedMinutes is int
+        && data.investedMinutes >= 0
+        && data.investedMinutes <= 10000000
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp
+        && (data.deletedAt == null || data.deletedAt is timestamp)
+        && ((data.status == 'archived' && data.archivedAt is timestamp)
+          || (data.status != 'archived' && data.archivedAt == null));
+    }
+
+    function hasValidProjectArchiveTransition() {
+      let before = resource.data;
+      let after = request.resource.data;
+      return (after.status == 'archived'
+          && (before.status == 'archived'
+            ? after.archivedAt == before.archivedAt
+            : after.archivedAt == request.time))
+        || (after.status != 'archived' && after.archivedAt == null);
+    }
+
+    function hasValidProjectDeletionTransition() {
+      let before = resource.data;
+      let after = request.resource.data;
+      return before.deletedAt == null
+        && (after.deletedAt == null
+          || (after.deletedAt == request.time
+            && after.status == 'archived'
+            && after.archivedAt is timestamp));
+    }
+
+    function isValidTaskStatus(status) {
+      return status == 'backlog'
+        || status == 'todo'
+        || status == 'in-progress'
+        || status == 'completed'
+        || status == 'archived';
+    }
+
+    function isValidTaskPriority(priority) {
+      return priority == 'low'
+        || priority == 'medium'
+        || priority == 'high'
+        || priority == 'critical';
+    }
+
+    function isValidOptionalTaskText(value, maximumSize) {
+      return value == null
+        || (value is string
+          && value.size() > 0
+          && value.size() <= maximumSize);
+    }
+
+    function hasValidTaskProjectValue() {
+      let data = request.resource.data;
+      return !data.keys().hasAny(['projectId'])
+        || data.projectId == null
+        || (data.projectId is string
+          && data.projectId.size() > 0
+          && data.projectId.size() <= 128);
+    }
+
+    function isActiveTaskProject(userId) {
+      let projectId = request.resource.data.projectId;
+      let projectPath = /databases/$(database)/documents/users/$(userId)/projects/$(projectId);
+      return exists(projectPath) && get(projectPath).data.deletedAt == null;
+    }
+
+    function hasValidTaskProjectForCreate(userId) {
+      let data = request.resource.data;
+      return !data.keys().hasAny(['projectId'])
+        || data.projectId == null
+        || isActiveTaskProject(userId);
+    }
+
+    function hasValidTaskProjectForUpdate(userId) {
+      let data = request.resource.data;
+      return !data.keys().hasAny(['projectId'])
+        || data.projectId == null
+        || isActiveTaskProject(userId)
+        || (resource.data.keys().hasAny(['projectId'])
+          && data.projectId == resource.data.projectId);
+    }
+
+    function hasValidTaskKanbanOrder() {
+      let data = request.resource.data;
+      return !data.keys().hasAny(['kanbanOrder'])
+        || data.kanbanOrder == null
+        || ((data.kanbanOrder is int || data.kanbanOrder is float)
+          && data.kanbanOrder >= 0
+          && data.kanbanOrder <= 1000000000000);
+    }
+
+    function isValidTaskTag(tag) {
+      return tag is string && tag.size() > 0 && tag.size() <= 32;
+    }
+
+    function hasValidTaskTags(tags) {
+      return tags is list
+        && tags.size() <= 10
+        && tags.size() == tags.toSet().size()
+        && (tags.size() < 1 || isValidTaskTag(tags[0]))
+        && (tags.size() < 2 || isValidTaskTag(tags[1]))
+        && (tags.size() < 3 || isValidTaskTag(tags[2]))
+        && (tags.size() < 4 || isValidTaskTag(tags[3]))
+        && (tags.size() < 5 || isValidTaskTag(tags[4]))
+        && (tags.size() < 6 || isValidTaskTag(tags[5]))
+        && (tags.size() < 7 || isValidTaskTag(tags[6]))
+        && (tags.size() < 8 || isValidTaskTag(tags[7]))
+        && (tags.size() < 9 || isValidTaskTag(tags[8]))
+        && (tags.size() < 10 || isValidTaskTag(tags[9]));
+    }
+
+    function hasValidTaskShape() {
+      let data = request.resource.data;
+      return data.keys().hasOnly([
+          'title',
+          'description',
+          'category',
+          'priority',
+          'status',
+          'project',
+          'projectId',
+          'kanbanOrder',
+          'dueAt',
+          'estimateMinutes',
+          'tags',
+          'xp',
+          'createdAt',
+          'updatedAt',
+          'completedAt'
+        ])
+        && data.keys().hasAll([
+          'title',
+          'description',
+          'category',
+          'priority',
+          'status',
+          'project',
+          'dueAt',
+          'estimateMinutes',
+          'tags',
+          'xp',
+          'createdAt',
+          'updatedAt',
+          'completedAt'
+        ])
+        && data.title is string
+        && data.title.size() > 0
+        && data.title.size() <= 160
+        && data.title.matches('.*\\S.*')
+        && isValidOptionalTaskText(data.description, 5000)
+        && isValidOptionalTaskText(data.category, 80)
+        && isValidTaskPriority(data.priority)
+        && isValidTaskStatus(data.status)
+        && isValidOptionalTaskText(data.project, 80)
+        && hasValidTaskProjectValue()
+        && hasValidTaskKanbanOrder()
+        && (data.dueAt == null || data.dueAt is timestamp)
+        && (data.estimateMinutes == null
+          || (data.estimateMinutes is int
+            && data.estimateMinutes >= 1
+            && data.estimateMinutes <= 1440))
+        && hasValidTaskTags(data.tags)
+        && data.xp is int
+        && data.xp >= 0
+        && data.xp <= 500
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp
+        && ((data.status == 'completed' && data.completedAt is timestamp)
+          || (data.status == 'archived'
+            && (data.completedAt == null || data.completedAt is timestamp))
+          || ((data.status == 'backlog'
+              || data.status == 'todo'
+              || data.status == 'in-progress')
+            && data.completedAt == null));
+    }
+
+    function hasValidTaskCompletionTransition() {
+      let before = resource.data;
+      let after = request.resource.data;
+      return (after.status == 'completed'
+          && (before.status == 'completed'
+            ? after.completedAt == before.completedAt
+            : after.completedAt == request.time))
+        || (after.status == 'archived'
+          && after.completedAt == before.completedAt)
+        || ((after.status == 'backlog'
+            || after.status == 'todo'
+            || after.status == 'in-progress')
+          && after.completedAt == null);
+    }
+
+    function hasValidProfileShape(userId) {
+      let data = request.resource.data;
+      return data.keys().hasOnly([
+          'uid',
+          'name',
+          'email',
+          'avatar',
+          'primaryArea',
+          'secondaryAreas',
+          'primaryObjective',
+          'dailyTaskGoal',
+          'level',
+          'xp',
+          'streak',
+          'settings',
+          'onboardingCompleted',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasAll([
+          'uid',
+          'name',
+          'email',
+          'avatar',
+          'primaryArea',
+          'secondaryAreas',
+          'primaryObjective',
+          'dailyTaskGoal',
+          'level',
+          'xp',
+          'streak',
+          'settings',
+          'onboardingCompleted',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.uid == userId
+        && data.uid is string
+        && data.name is string
+        && data.name.size() >= 2
+        && data.name.size() <= 80
+        && data.name.matches('.*\\S.*\\S.*')
+        && data.email is string
+        && data.email.size() <= 254
+        && (data.avatar == null
+          || (data.avatar is string && data.avatar.size() <= 2048))
+        && (data.primaryArea == null || isValidArea(data.primaryArea))
+        && hasValidSecondaryAreas(data.secondaryAreas, data.primaryArea)
+        && (data.primaryObjective == null
+          || isValidPrimaryObjective(data.primaryObjective))
+        && (data.dailyTaskGoal == null
+          || (data.dailyTaskGoal is int
+            && data.dailyTaskGoal >= 1
+            && data.dailyTaskGoal <= 50))
+        && data.level is int
+        && data.xp is int
+        && data.streak is int
+        && hasValidSettings(data.settings)
+        && data.onboardingCompleted is bool
+        && (!data.onboardingCompleted || data.primaryArea != null)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    match /users/{userId} {
+      allow get: if isOwner(userId);
+      allow list: if false;
+
+      allow create: if isOwner(userId)
+        && hasValidProfileShape(userId)
+        && request.resource.data.email == request.auth.token.email
+        && request.resource.data.level == 1
+        && request.resource.data.xp == 0
+        && request.resource.data.streak == 0
+        && request.resource.data.primaryObjective == null
+        && request.resource.data.dailyTaskGoal == null
+        && request.resource.data.onboardingCompleted == false
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+
+      allow update: if isOwner(userId)
+        && hasValidProfileShape(userId)
+        && request.resource.data.uid == resource.data.uid
+        && request.resource.data.email == request.auth.token.email
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.level == resource.data.level
+        && request.resource.data.xp == resource.data.xp
+        && request.resource.data.streak == resource.data.streak
+        && (!resource.data.onboardingCompleted
+          || request.resource.data.onboardingCompleted)
+        && (resource.data.onboardingCompleted
+          || !request.resource.data.onboardingCompleted
+          || (isValidPrimaryObjective(request.resource.data.primaryObjective)
+            && request.resource.data.dailyTaskGoal is int
+            && request.resource.data.dailyTaskGoal >= 1
+            && request.resource.data.dailyTaskGoal <= 50))
+        && (!resource.data.onboardingCompleted
+          || !resource.data.keys().hasAll(['primaryObjective'])
+          || resource.data.primaryObjective == null
+          || request.resource.data.primaryObjective != null)
+        && (!resource.data.onboardingCompleted
+          || !resource.data.keys().hasAll(['dailyTaskGoal'])
+          || resource.data.dailyTaskGoal == null
+          || request.resource.data.dailyTaskGoal != null)
+        && request.resource.data.updatedAt == request.time
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'name',
+          'email',
+          'avatar',
+          'primaryArea',
+          'secondaryAreas',
+          'primaryObjective',
+          'dailyTaskGoal',
+          'settings',
+          'onboardingCompleted',
+          'updatedAt'
+        ]);
+
+      allow delete: if false;
+
+      match /projects/{projectId} {
+        allow get, list: if isOwner(userId);
+
+        allow create: if isOwner(userId)
+          && hasValidProjectShape()
+          && request.resource.data.deletedAt == null
+          && request.resource.data.createdAt == request.time
+          && request.resource.data.updatedAt == request.time
+          && (request.resource.data.status == 'archived'
+            ? request.resource.data.archivedAt == request.time
+            : request.resource.data.archivedAt == null);
+
+        allow update: if isOwner(userId)
+          && resource.data.deletedAt == null
+          && hasValidProjectShape()
+          && request.resource.data.createdAt == resource.data.createdAt
+          && request.resource.data.updatedAt == request.time
+          && hasValidProjectArchiveTransition()
+          && hasValidProjectDeletionTransition()
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'name',
+            'description',
+            'status',
+            'dueAt',
+            'category',
+            'investedMinutes',
+            'updatedAt',
+            'archivedAt',
+            'deletedAt'
+          ]);
+
+        allow delete: if false;
+      }
+
+      match /tasks/{taskId} {
+        allow get, list: if isOwner(userId);
+
+        allow create: if isOwner(userId)
+          && hasValidTaskShape()
+          && hasValidTaskProjectForCreate(userId)
+          && request.resource.data.createdAt == request.time
+          && request.resource.data.updatedAt == request.time
+          && (request.resource.data.status == 'completed'
+            ? request.resource.data.completedAt == request.time
+            : request.resource.data.completedAt == null);
+
+        allow update: if isOwner(userId)
+          && hasValidTaskShape()
+          && hasValidTaskProjectForUpdate(userId)
+          && request.resource.data.createdAt == resource.data.createdAt
+          && request.resource.data.updatedAt == request.time
+          && hasValidTaskCompletionTransition()
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'title',
+            'description',
+            'category',
+            'priority',
+            'status',
+            'project',
+            'projectId',
+            'kanbanOrder',
+            'dueAt',
+            'estimateMinutes',
+            'tags',
+            'xp',
+            'updatedAt',
+            'completedAt'
+          ]);
+
+        allow delete: if isOwner(userId);
+      }
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
