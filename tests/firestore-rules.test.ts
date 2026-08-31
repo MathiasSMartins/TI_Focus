@@ -12,10 +12,12 @@ import {
   doc,
   getDoc,
   getDocs,
+  runTransaction,
   serverTimestamp,
   setDoc,
   Timestamp,
   updateDoc,
+  type Firestore,
 } from "firebase/firestore"
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest"
 
@@ -34,6 +36,9 @@ function validProfile(uid: string, email: string) {
     dailyTaskGoal: null,
     level: 1,
     xp: 0,
+    lastXpTransactionId: null,
+    xpWindowStartedAt: null,
+    xpWindowAmount: 0,
     streak: 0,
     settings: {
       timezone: "America/Sao_Paulo",
@@ -63,11 +68,66 @@ function validTask() {
     dueAt: null,
     estimateMinutes: null,
     tags: [],
-    xp: 10,
+    xp: 40,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
     completedAt: null,
   }
+}
+
+async function completeTaskWithXp(
+  database: Firestore,
+  userId: string,
+  taskId: string,
+) {
+  const profileReference = doc(database, "users", userId)
+  const taskReference = doc(database, "users", userId, "tasks", taskId)
+  const xpReference = doc(database, "users", userId, "xpTransactions", taskId)
+
+  await runTransaction(database, async (transaction) => {
+    const taskSnapshot = await transaction.get(taskReference)
+    const profileSnapshot = await transaction.get(profileReference)
+    const task = taskSnapshot.data()
+    const profile = profileSnapshot.data()
+    if (!task || !profile) throw new Error("Fixtures ausentes")
+
+    const reward =
+      task.priority === "low"
+        ? 20
+        : task.priority === "medium"
+          ? 40
+          : task.priority === "high"
+            ? 75
+            : 120
+    const xpAfter = profile.xp + reward
+
+    transaction.update(taskReference, {
+      status: "completed",
+      completedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    })
+    transaction.update(profileReference, {
+      xp: xpAfter,
+      level: 1,
+      lastXpTransactionId: taskId,
+      xpWindowStartedAt: serverTimestamp(),
+      xpWindowAmount: reward,
+      updatedAt: serverTimestamp(),
+    })
+    transaction.set(xpReference, {
+      userId,
+      amount: reward,
+      reason: "Conclusão de tarefa",
+      eventType: "TASK_COMPLETED",
+      taskId,
+      taskTitle: task.title,
+      createdAt: serverTimestamp(),
+      xpBefore: profile.xp,
+      xpAfter,
+      levelBefore: profile.level,
+      levelAfter: 1,
+    })
+  })
 }
 
 beforeAll(async () => {
@@ -339,6 +399,12 @@ describe("Firestore task ownership rules", () => {
       .firestore()
     const reference = doc(database, "users", "alice", "tasks", "task-1")
 
+    await assertSucceeds(
+      setDoc(
+        doc(database, "users", "alice"),
+        validProfile("alice", "alice@example.com"),
+      ),
+    )
     await assertSucceeds(setDoc(reference, validTask()))
     await assertSucceeds(getDoc(reference))
     await assertSucceeds(
@@ -348,16 +414,11 @@ describe("Firestore task ownership rules", () => {
       updateDoc(reference, {
         title: "Sistema de tarefas completo",
         priority: "high",
+        xp: 75,
         updatedAt: serverTimestamp(),
       }),
     )
-    await assertSucceeds(
-      updateDoc(reference, {
-        status: "completed",
-        completedAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      }),
-    )
+    await assertSucceeds(completeTaskWithXp(database, "alice", "task-1"))
 
     const completedSnapshot = await getDoc(reference)
     expect(completedSnapshot.data()?.status).toBe("completed")
@@ -479,17 +540,43 @@ describe("Firestore task ownership rules", () => {
     )
   })
 
-  it("concluir tarefa não altera o XP protegido do perfil", async () => {
+  it("concede XP atomicamente uma única vez por tarefa", async () => {
     const database = testEnvironment
       .authenticatedContext("alice", { email: "alice@example.com" })
       .firestore()
     const profileReference = doc(database, "users", "alice")
     const taskReference = doc(database, "users", "alice", "tasks", "task-1")
+    const xpReference = doc(
+      database,
+      "users",
+      "alice",
+      "xpTransactions",
+      "task-1",
+    )
 
     await assertSucceeds(
       setDoc(profileReference, validProfile("alice", "alice@example.com")),
     )
     await assertSucceeds(setDoc(taskReference, validTask()))
+    await assertFails(
+      updateDoc(taskReference, {
+        status: "completed",
+        completedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      }),
+    )
+    await assertSucceeds(completeTaskWithXp(database, "alice", "task-1"))
+
+    expect((await getDoc(profileReference)).data()?.xp).toBe(40)
+    expect((await getDoc(xpReference)).data()?.amount).toBe(40)
+
+    await assertSucceeds(
+      updateDoc(taskReference, {
+        status: "todo",
+        completedAt: null,
+        updatedAt: serverTimestamp(),
+      }),
+    )
     await assertSucceeds(
       updateDoc(taskReference, {
         status: "completed",
@@ -497,7 +584,12 @@ describe("Firestore task ownership rules", () => {
         updatedAt: serverTimestamp(),
       }),
     )
-
-    expect((await getDoc(profileReference)).data()?.xp).toBe(0)
+    expect((await getDoc(profileReference)).data()?.xp).toBe(40)
+    await assertFails(
+      updateDoc(xpReference, {
+        amount: 120,
+      }),
+    )
+    await assertFails(deleteDoc(xpReference))
   })
 })

@@ -64,6 +64,9 @@ export async function ensureUserProfile(user: User, preferredName?: string) {
         dailyTaskGoal: null,
         level: 1,
         xp: 0,
+        lastXpTransactionId: null,
+        xpWindowStartedAt: null,
+        xpWindowAmount: 0,
         streak: 0,
         settings: DEFAULT_USER_SETTINGS,
         onboardingCompleted: false,
@@ -94,6 +97,24 @@ export async function ensureUserProfile(user: User, preferredName?: string) {
       !Object.prototype.hasOwnProperty.call(currentProfile, "dailyTaskGoal")
     ) {
       updates.dailyTaskGoal = null
+    }
+    if (
+      !Object.prototype.hasOwnProperty.call(
+        currentProfile,
+        "lastXpTransactionId",
+      )
+    ) {
+      updates.lastXpTransactionId = null
+    }
+    if (
+      !Object.prototype.hasOwnProperty.call(currentProfile, "xpWindowStartedAt")
+    ) {
+      updates.xpWindowStartedAt = null
+    }
+    if (
+      !Object.prototype.hasOwnProperty.call(currentProfile, "xpWindowAmount")
+    ) {
+      updates.xpWindowAmount = 0
     }
 
     if (Object.keys(updates).length > 0) {

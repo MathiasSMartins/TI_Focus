@@ -9,9 +9,9 @@ export const TASK_STATUSES = [
 ] as const
 
 export const TASK_PRIORITIES = [
-  { id: "low", label: "Baixa", rank: 1 },
+  { id: "low", label: "Simples", rank: 1 },
   { id: "medium", label: "Média", rank: 2 },
-  { id: "high", label: "Alta", rank: 3 },
+  { id: "high", label: "Difícil", rank: 3 },
   { id: "critical", label: "Crítica", rank: 4 },
 ] as const
 
@@ -24,8 +24,6 @@ export const MAX_TASK_SHORT_TEXT_LENGTH = 80
 export const MAX_TASK_TAGS = 10
 export const MAX_TASK_TAG_LENGTH = 32
 export const MAX_TASK_ESTIMATE_MINUTES = 1440
-export const MAX_TASK_XP = 500
-export const DEFAULT_TASK_XP = 10
 export const MAX_TASK_PROJECT_ID_LENGTH = 128
 export const MAX_TASK_KANBAN_ORDER = 1_000_000_000_000
 
@@ -63,7 +61,6 @@ export interface CreateTaskInput {
   dueDate?: Date | null
   estimateMinutes?: number | null
   tags?: string[]
-  xp?: number
 }
 
 export interface UpdateTaskInput {
@@ -78,7 +75,6 @@ export interface UpdateTaskInput {
   dueDate?: Date | null
   estimateMinutes?: number | null
   tags?: string[]
-  xp?: number
 }
 
 export type TaskSort =

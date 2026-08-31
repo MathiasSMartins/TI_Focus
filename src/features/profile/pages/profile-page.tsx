@@ -17,6 +17,7 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { useAuth } from "@/features/auth"
+import { XpProgress } from "@/features/gamification"
 import { UserAvatar } from "@/features/profile/components/user-avatar"
 import {
   getAreaLabel,
@@ -50,6 +51,10 @@ export function ProfilePage() {
             <Badge className="mt-4">
               Nível {String(profile?.level ?? 1).padStart(2, "0")}
             </Badge>
+            <XpProgress
+              totalXp={profile?.xp ?? 0}
+              className="mt-5 w-full text-left"
+            />
             <Button className="mt-6 w-full" variant="outline" disabled>
               Edição de perfil em breve
             </Button>

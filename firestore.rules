@@ -185,6 +185,55 @@ service cloud.firestore {
         || priority == 'critical';
     }
 
+    function taskXpForPriority(priority) {
+      return priority == 'low' ? 20
+        : priority == 'medium' ? 40
+        : priority == 'high' ? 75
+        : priority == 'critical' ? 120
+        : -1;
+    }
+
+    function minimumXpForLevel(level) {
+      return 50 * (level - 1) * (level + 2);
+    }
+
+    function isValidLevelForXp(level, xp) {
+      return level is int
+        && level >= 1
+        && xp >= minimumXpForLevel(level)
+        && xp < minimumXpForLevel(level + 1);
+    }
+
+    function profilePath(userId) {
+      return /databases/$(database)/documents/users/$(userId);
+    }
+
+    function taskPath(userId, taskId) {
+      return /databases/$(database)/documents/users/$(userId)/tasks/$(taskId);
+    }
+
+    function xpTransactionPath(userId, taskId) {
+      return /databases/$(database)/documents/users/$(userId)/xpTransactions/$(taskId);
+    }
+
+    function isXpWindowExpired(profile) {
+      return profile.xpWindowStartedAt == null
+        || request.time >= profile.xpWindowStartedAt + duration.value(24, 'h');
+    }
+
+    function expectedXpTransactionAmount(userId, priority) {
+      let profile = get(profilePath(userId)).data;
+      let reward = taskXpForPriority(priority);
+      return !isXpWindowExpired(profile)
+          && profile.xpWindowAmount + reward > 1000
+        ? 0
+        : reward;
+    }
+
+    function hasXpTransactionAfter(userId, taskId) {
+      return existsAfter(xpTransactionPath(userId, taskId));
+    }
+
     function isValidOptionalTaskText(value, maximumSize) {
       return value == null
         || (value is string
@@ -304,8 +353,7 @@ service cloud.firestore {
             && data.estimateMinutes <= 1440))
         && hasValidTaskTags(data.tags)
         && data.xp is int
-        && data.xp >= 0
-        && data.xp <= 500
+        && data.xp == taskXpForPriority(data.priority)
         && data.createdAt is timestamp
         && data.updatedAt is timestamp
         && ((data.status == 'completed' && data.completedAt is timestamp)
@@ -345,6 +393,9 @@ service cloud.firestore {
           'dailyTaskGoal',
           'level',
           'xp',
+          'lastXpTransactionId',
+          'xpWindowStartedAt',
+          'xpWindowAmount',
           'streak',
           'settings',
           'onboardingCompleted',
@@ -362,6 +413,9 @@ service cloud.firestore {
           'dailyTaskGoal',
           'level',
           'xp',
+          'lastXpTransactionId',
+          'xpWindowStartedAt',
+          'xpWindowAmount',
           'streak',
           'settings',
           'onboardingCompleted',
@@ -387,13 +441,180 @@ service cloud.firestore {
             && data.dailyTaskGoal >= 1
             && data.dailyTaskGoal <= 50))
         && data.level is int
+        && data.level >= 1
         && data.xp is int
+        && data.xp >= 0
+        && data.xp <= 1000000000
+        && isValidLevelForXp(data.level, data.xp)
+        && (data.lastXpTransactionId == null
+          || (data.lastXpTransactionId is string
+            && data.lastXpTransactionId.size() > 0
+            && data.lastXpTransactionId.size() <= 128
+            && !data.lastXpTransactionId.matches('.*[/].*')))
+        && (data.xpWindowStartedAt == null
+          || data.xpWindowStartedAt is timestamp)
+        && data.xpWindowAmount is int
+        && data.xpWindowAmount >= 0
+        && data.xpWindowAmount <= 1000
         && data.streak is int
         && hasValidSettings(data.settings)
         && data.onboardingCompleted is bool
         && (!data.onboardingCompleted || data.primaryArea != null)
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
+    }
+
+    function hasValidRegularProfileUpdate() {
+      let before = resource.data;
+      let after = request.resource.data;
+      return after.level == before.level
+        && after.xp == before.xp
+        && after.streak == before.streak
+        && (!before.keys().hasAll(['lastXpTransactionId'])
+          ? after.lastXpTransactionId == null
+          : after.lastXpTransactionId == before.lastXpTransactionId)
+        && (!before.keys().hasAll(['xpWindowStartedAt'])
+          ? after.xpWindowStartedAt == null
+          : after.xpWindowStartedAt == before.xpWindowStartedAt)
+        && (!before.keys().hasAll(['xpWindowAmount'])
+          ? after.xpWindowAmount == 0
+          : after.xpWindowAmount == before.xpWindowAmount)
+        && (!before.onboardingCompleted || after.onboardingCompleted)
+        && (before.onboardingCompleted
+          || !after.onboardingCompleted
+          || (isValidPrimaryObjective(after.primaryObjective)
+            && after.dailyTaskGoal is int
+            && after.dailyTaskGoal >= 1
+            && after.dailyTaskGoal <= 50))
+        && (!before.onboardingCompleted
+          || !before.keys().hasAll(['primaryObjective'])
+          || before.primaryObjective == null
+          || after.primaryObjective != null)
+        && (!before.onboardingCompleted
+          || !before.keys().hasAll(['dailyTaskGoal'])
+          || before.dailyTaskGoal == null
+          || after.dailyTaskGoal != null)
+        && after.diff(before).affectedKeys().hasOnly([
+          'name',
+          'email',
+          'avatar',
+          'primaryArea',
+          'secondaryAreas',
+          'primaryObjective',
+          'dailyTaskGoal',
+          'settings',
+          'onboardingCompleted',
+          'lastXpTransactionId',
+          'xpWindowStartedAt',
+          'xpWindowAmount',
+          'updatedAt'
+        ]);
+    }
+
+    function hasValidXpProfileUpdate(userId) {
+      let before = resource.data;
+      let after = request.resource.data;
+      let transactionId = after.lastXpTransactionId;
+      let transactionPath = xpTransactionPath(userId, transactionId);
+      let xpTransaction = getAfter(transactionPath).data;
+      let windowExpired = isXpWindowExpired(before);
+      return transactionId is string
+        && transactionId.size() > 0
+        && transactionId.size() <= 128
+        && !exists(transactionPath)
+        && existsAfter(transactionPath)
+        && xpTransaction.userId == userId
+        && xpTransaction.taskId == transactionId
+        && xpTransaction.eventType == 'TASK_COMPLETED'
+        && xpTransaction.amount > 0
+        && after.xp == before.xp + xpTransaction.amount
+        && after.level == xpTransaction.levelAfter
+        && isValidLevelForXp(after.level, after.xp)
+        && (windowExpired
+          ? (after.xpWindowStartedAt == request.time
+            && after.xpWindowAmount == xpTransaction.amount)
+          : (after.xpWindowStartedAt == before.xpWindowStartedAt
+            && after.xpWindowAmount
+              == before.xpWindowAmount + xpTransaction.amount))
+        && after.xpWindowAmount <= 1000
+        && after.streak == before.streak
+        && after.diff(before).affectedKeys().hasOnly([
+          'xp',
+          'level',
+          'lastXpTransactionId',
+          'xpWindowStartedAt',
+          'xpWindowAmount',
+          'updatedAt'
+        ]);
+    }
+
+    function hasValidXpTransactionCreate(userId, transactionId) {
+      let data = request.resource.data;
+      let taskReference = taskPath(userId, transactionId);
+      let userProfilePath = profilePath(userId);
+      let taskAfter = getAfter(taskReference).data;
+      let profileBefore = get(userProfilePath).data;
+      let profileAfter = getAfter(userProfilePath).data;
+      let expectedAmount = expectedXpTransactionAmount(
+        userId,
+        taskAfter.priority
+      );
+      return data.keys().hasOnly([
+          'userId',
+          'amount',
+          'reason',
+          'eventType',
+          'taskId',
+          'taskTitle',
+          'createdAt',
+          'xpBefore',
+          'xpAfter',
+          'levelBefore',
+          'levelAfter'
+        ])
+        && data.keys().hasAll([
+          'userId',
+          'amount',
+          'reason',
+          'eventType',
+          'taskId',
+          'taskTitle',
+          'createdAt',
+          'xpBefore',
+          'xpAfter',
+          'levelBefore',
+          'levelAfter'
+        ])
+        && transactionId == data.taskId
+        && data.userId == userId
+        && data.eventType == 'TASK_COMPLETED'
+        && data.amount == expectedAmount
+        && data.reason == (expectedAmount == 0
+          ? 'Limite diário de XP atingido'
+          : 'Conclusão de tarefa')
+        && data.taskTitle == taskAfter.title
+        && data.createdAt == request.time
+        && data.xpBefore == profileBefore.xp
+        && data.xpAfter == profileBefore.xp + expectedAmount
+        && data.levelBefore == profileBefore.level
+        && data.levelAfter == profileAfter.level
+        && existsAfter(taskReference)
+        && taskAfter.status == 'completed'
+        && taskAfter.completedAt == request.time
+        && (!exists(taskReference)
+          || get(taskReference).data.status != 'completed')
+        && (expectedAmount == 0
+          ? (profileAfter.xp == profileBefore.xp
+            && profileAfter.level == profileBefore.level
+            && profileAfter.lastXpTransactionId
+              == profileBefore.lastXpTransactionId
+            && profileAfter.xpWindowStartedAt
+              == profileBefore.xpWindowStartedAt
+            && profileAfter.xpWindowAmount
+              == profileBefore.xpWindowAmount)
+          : (profileAfter.lastXpTransactionId == transactionId
+            && profileAfter.xp == data.xpAfter
+            && profileAfter.level == data.levelAfter));
     }
 
     match /users/{userId} {
@@ -405,6 +626,9 @@ service cloud.firestore {
         && request.resource.data.email == request.auth.token.email
         && request.resource.data.level == 1
         && request.resource.data.xp == 0
+        && request.resource.data.lastXpTransactionId == null
+        && request.resource.data.xpWindowStartedAt == null
+        && request.resource.data.xpWindowAmount == 0
         && request.resource.data.streak == 0
         && request.resource.data.primaryObjective == null
         && request.resource.data.dailyTaskGoal == null
@@ -417,38 +641,10 @@ service cloud.firestore {
         && request.resource.data.uid == resource.data.uid
         && request.resource.data.email == request.auth.token.email
         && request.resource.data.createdAt == resource.data.createdAt
-        && request.resource.data.level == resource.data.level
-        && request.resource.data.xp == resource.data.xp
-        && request.resource.data.streak == resource.data.streak
-        && (!resource.data.onboardingCompleted
-          || request.resource.data.onboardingCompleted)
-        && (resource.data.onboardingCompleted
-          || !request.resource.data.onboardingCompleted
-          || (isValidPrimaryObjective(request.resource.data.primaryObjective)
-            && request.resource.data.dailyTaskGoal is int
-            && request.resource.data.dailyTaskGoal >= 1
-            && request.resource.data.dailyTaskGoal <= 50))
-        && (!resource.data.onboardingCompleted
-          || !resource.data.keys().hasAll(['primaryObjective'])
-          || resource.data.primaryObjective == null
-          || request.resource.data.primaryObjective != null)
-        && (!resource.data.onboardingCompleted
-          || !resource.data.keys().hasAll(['dailyTaskGoal'])
-          || resource.data.dailyTaskGoal == null
-          || request.resource.data.dailyTaskGoal != null)
         && request.resource.data.updatedAt == request.time
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          'name',
-          'email',
-          'avatar',
-          'primaryArea',
-          'secondaryAreas',
-          'primaryObjective',
-          'dailyTaskGoal',
-          'settings',
-          'onboardingCompleted',
-          'updatedAt'
-        ]);
+        && (request.resource.data.xp == resource.data.xp
+          ? hasValidRegularProfileUpdate()
+          : hasValidXpProfileUpdate(userId));
 
       allow delete: if false;
 
@@ -495,7 +691,8 @@ service cloud.firestore {
           && request.resource.data.createdAt == request.time
           && request.resource.data.updatedAt == request.time
           && (request.resource.data.status == 'completed'
-            ? request.resource.data.completedAt == request.time
+            ? (request.resource.data.completedAt == request.time
+              && hasXpTransactionAfter(userId, taskId))
             : request.resource.data.completedAt == null);
 
         allow update: if isOwner(userId)
@@ -504,6 +701,9 @@ service cloud.firestore {
           && request.resource.data.createdAt == resource.data.createdAt
           && request.resource.data.updatedAt == request.time
           && hasValidTaskCompletionTransition()
+          && (!(resource.data.status != 'completed'
+              && request.resource.data.status == 'completed')
+            || hasXpTransactionAfter(userId, taskId))
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
             'title',
             'description',
@@ -522,6 +722,27 @@ service cloud.firestore {
           ]);
 
         allow delete: if isOwner(userId);
+      }
+
+      match /gamificationMeta/clock {
+        allow get: if isOwner(userId);
+
+        allow create, update: if isOwner(userId)
+          && request.resource.data.keys().hasOnly(['syncedAt'])
+          && request.resource.data.keys().hasAll(['syncedAt'])
+          && request.resource.data.syncedAt is timestamp
+          && request.resource.data.syncedAt == request.time;
+
+        allow list, delete: if false;
+      }
+
+      match /xpTransactions/{transactionId} {
+        allow get, list: if isOwner(userId);
+
+        allow create: if isOwner(userId)
+          && hasValidXpTransactionCreate(userId, transactionId);
+
+        allow update, delete: if false;
       }
     }
 

@@ -270,8 +270,8 @@ export function TasksPage() {
         >
           <CheckCircle2 className="size-5 shrink-0" aria-hidden="true" />
           <p className="flex-1 text-sm">
-            <strong>Tarefa concluída!</strong> O evento TASK_COMPLETED está
-            pronto para a próxima fase de gamificação.
+            <strong>Tarefa concluída!</strong> A recompensa foi processada e
+            registrada no seu histórico de XP.
           </p>
           <Button
             type="button"

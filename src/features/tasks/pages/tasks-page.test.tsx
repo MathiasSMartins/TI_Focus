@@ -123,7 +123,6 @@ describe("TasksPage", () => {
         title: "Implementar API v2",
         priority: "critical",
         status: "todo",
-        xp: 20,
       }),
     )
   })
@@ -165,7 +164,7 @@ describe("TasksPage", () => {
 
     expect(actions.completeTask).toHaveBeenCalledWith("task-1")
     expect(
-      await screen.findByText(/O evento TASK_COMPLETED está pronto/),
+      await screen.findByText(/A recompensa foi processada/),
     ).toBeInTheDocument()
   })
 })

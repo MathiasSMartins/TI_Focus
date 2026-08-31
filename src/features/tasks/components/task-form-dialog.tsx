@@ -12,12 +12,11 @@ import { Button } from "@/components/ui/button"
 import { FormMessage } from "@/components/ui/form-message"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { getTaskXpReward } from "@/features/gamification"
 import {
-  DEFAULT_TASK_XP,
   MAX_TASK_ESTIMATE_MINUTES,
   MAX_TASK_TAG_LENGTH,
   MAX_TASK_TAGS,
-  MAX_TASK_XP,
   TASK_PRIORITIES,
   TASK_STATUSES,
   type CreateTaskInput,
@@ -72,7 +71,6 @@ export function TaskFormDialog({
     task?.estimateMinutes?.toString() ?? "",
   )
   const [tags, setTags] = useState(task?.tags.join(", ") ?? "")
-  const [xp, setXp] = useState((task?.xp ?? DEFAULT_TASK_XP).toString())
   const [validationError, setValidationError] = useState<string | null>(null)
   const dialogRef = useRef<HTMLElement>(null)
 
@@ -119,7 +117,6 @@ export function TaskFormDialog({
     }
 
     const estimateMinutes = estimate ? Number(estimate) : null
-    const xpValue = Number(xp)
     if (
       estimateMinutes != null &&
       (!Number.isInteger(estimateMinutes) ||
@@ -129,11 +126,6 @@ export function TaskFormDialog({
       setValidationError("A estimativa deve estar entre 1 e 1440 minutos.")
       return
     }
-    if (!Number.isInteger(xpValue) || xpValue < 0 || xpValue > MAX_TASK_XP) {
-      setValidationError(`O XP deve estar entre 0 e ${MAX_TASK_XP}.`)
-      return
-    }
-
     const normalizedTags = [
       ...new Set(tags.split(",").map((tag) => tag.trim())),
     ].filter(Boolean)
@@ -169,7 +161,6 @@ export function TaskFormDialog({
       dueDate: fromDateInputValue(dueDate),
       estimateMinutes,
       tags: normalizedTags,
-      xp: xpValue,
     })
     if (success) onClose()
   }
@@ -346,20 +337,13 @@ export function TaskFormDialog({
             </p>
           </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="task-xp">XP da tarefa</Label>
-            <Input
-              id="task-xp"
-              type="number"
-              min={0}
-              max={MAX_TASK_XP}
-              value={xp}
-              onChange={(event) => setXp(event.target.value)}
-              className="max-w-40"
-              disabled={isSubmitting}
-            />
-            <p className="text-xs text-muted-foreground">
-              Valor informativo. O XP do perfil ainda não será alterado.
+          <div className="rounded-lg border border-primary/20 bg-primary/5 p-4">
+            <p className="text-sm font-medium text-foreground">
+              Recompensa ao concluir: {getTaskXpReward(priority)} XP
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              O valor é calculado pela dificuldade e concedido apenas uma vez
+              por tarefa.
             </p>
           </div>
 

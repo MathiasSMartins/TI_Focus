@@ -1,13 +1,15 @@
 import {
-  ArrowUpRight,
   CheckCircle2,
-  Clock3,
+  CircleDot,
   Flame,
+  LoaderCircle,
   Sparkles,
-  Target,
   Trophy,
+  Zap,
   type LucideIcon,
 } from "lucide-react"
+import { useMemo, useState } from "react"
+import { useNavigate } from "react-router-dom"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -18,6 +20,9 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
+import { useAuth } from "@/features/auth"
+import { XpProgress, useXpTransactions } from "@/features/gamification"
+import { useTasks } from "@/features/tasks/hooks/use-tasks"
 
 interface StatItem {
   label: string
@@ -26,57 +31,78 @@ interface StatItem {
   icon: LucideIcon
 }
 
-const stats: StatItem[] = [
-  {
-    label: "Tarefas concluídas",
-    value: "12",
-    detail: "+3 esta semana",
-    icon: CheckCircle2,
-  },
-  {
-    label: "Tempo em foco",
-    value: "1h 45m",
-    detail: "4 sessões",
-    icon: Clock3,
-  },
-  { label: "XP semanal", value: "680", detail: "68% da meta", icon: Trophy },
-  { label: "Sequência", value: "7 dias", detail: "Recorde atual", icon: Flame },
-]
-
-const recentTasks = [
-  {
-    title: "Revisar alertas críticos do ambiente",
-    category: "Segurança",
-    status: "Em andamento",
-  },
-  {
-    title: "Documentar fluxo de implantação",
-    category: "DevOps",
-    status: "Planejada",
-  },
-  {
-    title: "Analisar métricas da última sprint",
-    category: "Dados",
-    status: "Concluída",
-  },
-]
+function formatTransactionDate(date: Date) {
+  return new Intl.DateTimeFormat("pt-BR", {
+    day: "2-digit",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date)
+}
 
 export function DashboardPage() {
+  const navigate = useNavigate()
+  const { user, profile } = useAuth()
+  const taskState = useTasks(user?.uid)
+  const xpState = useXpTransactions(user?.uid, 8)
+  const [dashboardOpenedAt] = useState(() => Date.now())
+
+  const weeklyXp = useMemo(() => {
+    const start = dashboardOpenedAt - 7 * 24 * 60 * 60 * 1_000
+    return xpState.transactions
+      .filter((transaction) => transaction.createdAt.toMillis() >= start)
+      .reduce((total, transaction) => total + transaction.amount, 0)
+  }, [dashboardOpenedAt, xpState.transactions])
+
+  const completedTasks = taskState.tasks.filter(
+    (task) => task.status === "completed",
+  ).length
+  const pendingTasks = taskState.tasks.filter(
+    (task) => task.status !== "completed" && task.status !== "archived",
+  ).length
+
+  const stats: StatItem[] = [
+    {
+      label: "Tarefas concluídas",
+      value: String(completedTasks),
+      detail: `${taskState.tasks.length} tarefas registradas`,
+      icon: CheckCircle2,
+    },
+    {
+      label: "Tarefas pendentes",
+      value: String(pendingTasks),
+      detail: "Backlog, a fazer e em andamento",
+      icon: CircleDot,
+    },
+    {
+      label: "XP nos últimos 7 dias",
+      value: String(weeklyXp),
+      detail: `${profile?.xp ?? 0} XP acumulado`,
+      icon: Trophy,
+    },
+    {
+      label: "Sequência",
+      value: `${profile?.streak ?? 0} dias`,
+      detail: "Consistência atual",
+      icon: Flame,
+    },
+  ]
+
   return (
     <div className="space-y-6">
       <section className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <Badge variant="outline">Visão demonstrativa</Badge>
+          <Badge variant="outline">Gamificação ativa</Badge>
           <h2 className="mt-3 text-2xl font-bold tracking-tight sm:text-3xl">
             Continue construindo seu progresso.
           </h2>
           <p className="mt-2 max-w-2xl text-sm text-muted-foreground sm:text-base">
-            A fundação do seu workspace está pronta para receber tarefas, foco e
-            gamificação.
+            Conclua tarefas relevantes, acumule XP e avance pelos níveis da sua
+            jornada profissional.
           </p>
         </div>
-        <Button>
-          <Sparkles /> Iniciar planejamento
+        <Button type="button" onClick={() => navigate("/tasks")}>
+          <Sparkles /> Planejar tarefas
         </Button>
       </section>
 
@@ -111,50 +137,66 @@ export function DashboardPage() {
         })}
       </section>
 
-      <section className="grid gap-6 xl:grid-cols-[1.5fr_1fr]">
+      <section className="grid gap-6 xl:grid-cols-[1.4fr_1fr]">
         <Card>
-          <CardHeader className="flex-row items-start justify-between gap-4">
-            <div>
-              <CardTitle>Prioridades recentes</CardTitle>
-              <CardDescription className="mt-1.5">
-                Uma prévia da futura gestão de tarefas.
-              </CardDescription>
-            </div>
-            <Button variant="ghost" size="sm">
-              Ver tarefas <ArrowUpRight />
-            </Button>
+          <CardHeader>
+            <CardTitle>Histórico de XP</CardTitle>
+            <CardDescription>
+              Cada recompensa é registrada uma única vez por tarefa.
+            </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
-            {recentTasks.map((task) => (
-              <div
-                key={task.title}
-                className="flex flex-col gap-3 rounded-lg border border-border bg-background/35 p-4 sm:flex-row sm:items-center sm:justify-between"
-              >
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-medium">{task.title}</p>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    {task.category}
-                  </p>
-                </div>
-                <Badge
-                  variant={
-                    task.status === "Concluída" ? "success" : "secondary"
-                  }
-                >
-                  {task.status}
-                </Badge>
+            {xpState.isLoading ? (
+              <div className="flex min-h-32 items-center justify-center gap-2 text-sm text-muted-foreground">
+                <LoaderCircle className="size-4 animate-spin" /> Carregando
+                transações...
               </div>
-            ))}
+            ) : xpState.transactions.length === 0 ? (
+              <div className="flex min-h-32 flex-col items-center justify-center text-center">
+                <Zap className="size-8 text-primary/60" aria-hidden="true" />
+                <p className="mt-3 text-sm font-medium">
+                  Sua primeira recompensa aparecerá aqui
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Conclua uma tarefa para receber XP.
+                </p>
+              </div>
+            ) : (
+              xpState.transactions.map((transaction) => (
+                <div
+                  key={transaction.id}
+                  className="flex items-center justify-between gap-4 rounded-lg border border-border bg-background/35 p-4"
+                >
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium">
+                      {transaction.taskTitle}
+                    </p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {transaction.reason} ·{" "}
+                      {formatTransactionDate(transaction.createdAt.toDate())}
+                    </p>
+                  </div>
+                  <Badge
+                    variant={transaction.amount > 0 ? "success" : "secondary"}
+                  >
+                    +{transaction.amount} XP
+                  </Badge>
+                </div>
+              ))
+            )}
+            {xpState.error && (
+              <p className="text-xs text-destructive">{xpState.error}</p>
+            )}
           </CardContent>
         </Card>
 
-        <Card className="overflow-hidden">
+        <Card>
           <CardHeader>
             <div className="flex items-center justify-between gap-4">
               <div>
                 <CardTitle>Progresso de nível</CardTitle>
                 <CardDescription className="mt-1.5">
-                  Nível 01 · Operador
+                  Curva progressiva baseada no XP total.
                 </CardDescription>
               </div>
               <span className="flex size-11 items-center justify-center rounded-xl bg-amber-500/10 text-amber-400">
@@ -163,24 +205,14 @@ export function DashboardPage() {
             </div>
           </CardHeader>
           <CardContent>
-            <div className="flex items-end justify-between">
-              <span className="text-3xl font-bold">120 XP</span>
-              <span className="text-xs text-muted-foreground">de 1.000 XP</span>
-            </div>
-            <div className="mt-4 h-2 overflow-hidden rounded-full bg-secondary">
-              <div className="h-full w-[12%] rounded-full bg-primary" />
-            </div>
-            <div className="mt-6 grid grid-cols-2 gap-3">
-              <div className="rounded-lg border border-border bg-background/40 p-3">
-                <Target className="size-4 text-primary" />
-                <p className="mt-2 text-xs text-muted-foreground">Meta ativa</p>
-                <p className="mt-1 text-sm font-medium">5 dias de foco</p>
-              </div>
-              <div className="rounded-lg border border-border bg-background/40 p-3">
-                <Flame className="size-4 text-orange-400" />
-                <p className="mt-2 text-xs text-muted-foreground">Streak</p>
-                <p className="mt-1 text-sm font-medium">7 dias</p>
-              </div>
+            <XpProgress totalXp={profile?.xp ?? 0} />
+            <div className="mt-6 rounded-lg border border-border bg-background/40 p-4">
+              <p className="text-xs text-muted-foreground">
+                Proteção anti-abuso
+              </p>
+              <p className="mt-1 text-sm font-medium">
+                Uma recompensa por tarefa · 1.000 XP por ciclo individual de 24h
+              </p>
             </div>
           </CardContent>
         </Card>

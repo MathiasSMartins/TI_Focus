@@ -54,6 +54,9 @@ export interface UserProfile {
   dailyTaskGoal: number | null
   level: number
   xp: number
+  lastXpTransactionId?: string | null
+  xpWindowStartedAt?: Timestamp | null
+  xpWindowAmount?: number
   streak: number
   settings: UserSettings
   onboardingCompleted: boolean

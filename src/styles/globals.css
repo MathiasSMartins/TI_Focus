@@ -75,3 +75,17 @@
   scrollbar-width: thin;
   scrollbar-color: var(--border) transparent;
 }
+
+@keyframes xp-pop {
+  0% {
+    opacity: 0;
+    transform: translateY(1rem) scale(0.92);
+  }
+  65% {
+    transform: translateY(-0.2rem) scale(1.02);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}

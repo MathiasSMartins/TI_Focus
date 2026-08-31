@@ -16,12 +16,17 @@ import {
   type WithFieldValue,
 } from "firebase/firestore"
 
+import { getTaskXpReward, type XpAwardResult } from "@/features/gamification"
+import {
+  applyPreparedXpAward,
+  prepareTaskXpAward,
+  runWithXpServerTime,
+} from "@/features/gamification/services/xp-repository"
 import {
   publishTaskCompleted,
   TASK_COMPLETED,
 } from "@/features/tasks/events/task-events"
 import {
-  DEFAULT_TASK_XP,
   MAX_TASK_DESCRIPTION_LENGTH,
   MAX_TASK_ESTIMATE_MINUTES,
   MAX_TASK_KANBAN_ORDER,
@@ -30,7 +35,6 @@ import {
   MAX_TASK_TAG_LENGTH,
   MAX_TASK_TAGS,
   MAX_TASK_TITLE_LENGTH,
-  MAX_TASK_XP,
   TASK_PRIORITIES,
   TASK_STATUSES,
   type CreateTaskInput,
@@ -127,14 +131,6 @@ function normalizeEstimate(value: number | null | undefined) {
   return value
 }
 
-function normalizeXp(value: number | undefined) {
-  const xp = value ?? DEFAULT_TASK_XP
-  if (!Number.isInteger(xp) || xp < 0 || xp > MAX_TASK_XP) {
-    throw new Error(`O XP deve estar entre 0 e ${MAX_TASK_XP}.`)
-  }
-  return xp
-}
-
 function normalizePriority(priority: TaskPriority | undefined) {
   const nextPriority = priority ?? "medium"
   if (!TASK_PRIORITIES.some((item) => item.id === nextPriority)) {
@@ -157,29 +153,39 @@ function normalizeDueDate(dueDate: Date | null | undefined) {
   return Timestamp.fromDate(dueDate)
 }
 
-function publishCompletion(userId: string, taskId: string, xp: number) {
+function publishCompletion(
+  userId: string,
+  taskId: string,
+  award: XpAwardResult,
+) {
   publishTaskCompleted({
     type: TASK_COMPLETED,
     version: 1,
     userId,
     taskId,
-    xp,
+    xp: award.amount,
     occurredAt: new Date(),
+    levelBefore: award.levelBefore,
+    levelAfter: award.levelAfter,
+    dailyLimitReached: award.dailyLimitReached,
+    transactionId: award.transactionId,
   })
 }
 
 export async function createTask(uid: string, input: CreateTaskInput) {
   const reference = doc(getTaskCollection(uid))
   const status = normalizeStatus(input.status)
-  const xp = normalizeXp(input.xp)
+  const priority = normalizePriority(input.priority)
+  const title = normalizeTitle(input.title)
+  const xp = getTaskXpReward(priority)
   const task: WithFieldValue<TaskDocument> = {
-    title: normalizeTitle(input.title),
+    title,
     description: normalizeOptionalText(
       input.description,
       MAX_TASK_DESCRIPTION_LENGTH,
     ),
     category: normalizeOptionalText(input.category, MAX_TASK_SHORT_TEXT_LENGTH),
-    priority: normalizePriority(input.priority),
+    priority,
     status,
     project: normalizeOptionalText(input.project, MAX_TASK_SHORT_TEXT_LENGTH),
     projectId: normalizeProjectId(input.projectId),
@@ -193,14 +199,36 @@ export async function createTask(uid: string, input: CreateTaskInput) {
     completedAt: status === "completed" ? serverTimestamp() : null,
   }
 
-  await setDoc(reference, task)
-  if (status === "completed") publishCompletion(uid, reference.id, xp)
+  if (status !== "completed") {
+    await setDoc(reference, task)
+    return reference.id
+  }
+
+  const award = await runWithXpServerTime(uid, (serverNow) =>
+    runTransaction<XpAwardResult>(
+      getFirestoreInstance(),
+      async (transaction) => {
+        const preparedAward = await prepareTaskXpAward(
+          transaction,
+          uid,
+          reference.id,
+          title,
+          priority,
+          serverNow,
+        )
+        transaction.set(reference, task)
+        applyPreparedXpAward(transaction, preparedAward)
+        return preparedAward.result
+      },
+    ),
+  )
+  publishCompletion(uid, reference.id, award)
   return reference.id
 }
 
 interface TaskTransitionResult {
   completed: boolean
-  xp: number
+  award: XpAwardResult | null
 }
 
 export async function updateTask(
@@ -208,79 +236,107 @@ export async function updateTask(
   taskId: string,
   input: UpdateTaskInput,
 ) {
-  const result = await runTransaction<TaskTransitionResult>(
-    getFirestoreInstance(),
-    async (transaction) => {
-      const reference = getTaskReference(uid, taskId)
-      const snapshot = await transaction.get(reference)
-      if (!snapshot.exists()) throw new Error("Tarefa não encontrada.")
+  const executeUpdate = (serverNow: Timestamp | null) =>
+    runTransaction<TaskTransitionResult>(
+      getFirestoreInstance(),
+      async (transaction) => {
+        const reference = getTaskReference(uid, taskId)
+        const snapshot = await transaction.get(reference)
+        if (!snapshot.exists()) throw new Error("Tarefa não encontrada.")
 
-      const current = snapshot.data()
-      const nextStatus = normalizeStatus(input.status ?? current.status)
-      const updates: Record<string, unknown> = {
-        status: nextStatus,
-        updatedAt: serverTimestamp(),
-      }
-
-      if (Object.hasOwn(input, "title")) {
-        updates.title = normalizeTitle(input.title ?? "")
-      }
-      if (Object.hasOwn(input, "description")) {
-        updates.description = normalizeOptionalText(
-          input.description,
-          MAX_TASK_DESCRIPTION_LENGTH,
+        const current = snapshot.data()
+        const nextStatus = normalizeStatus(input.status ?? current.status)
+        const nextPriority = normalizePriority(
+          input.priority ?? current.priority,
         )
-      }
-      if (Object.hasOwn(input, "category")) {
-        updates.category = normalizeOptionalText(
-          input.category,
-          MAX_TASK_SHORT_TEXT_LENGTH,
-        )
-      }
-      if (Object.hasOwn(input, "priority")) {
-        updates.priority = normalizePriority(input.priority)
-      }
-      if (Object.hasOwn(input, "project")) {
-        updates.project = normalizeOptionalText(
-          input.project,
-          MAX_TASK_SHORT_TEXT_LENGTH,
-        )
-      }
-      if (Object.hasOwn(input, "projectId")) {
-        updates.projectId = normalizeProjectId(input.projectId)
-      }
-      if (Object.hasOwn(input, "kanbanOrder")) {
-        updates.kanbanOrder = normalizeKanbanOrder(input.kanbanOrder)
-      }
-      if (Object.hasOwn(input, "dueDate")) {
-        updates.dueAt = normalizeDueDate(input.dueDate)
-      }
-      if (Object.hasOwn(input, "estimateMinutes")) {
-        updates.estimateMinutes = normalizeEstimate(input.estimateMinutes)
-      }
-      if (Object.hasOwn(input, "tags")) {
-        updates.tags = normalizeTags(input.tags)
-      }
-      if (Object.hasOwn(input, "xp")) updates.xp = normalizeXp(input.xp)
+        const updates: Record<string, unknown> = {
+          priority: nextPriority,
+          xp: getTaskXpReward(nextPriority),
+          status: nextStatus,
+          updatedAt: serverTimestamp(),
+        }
 
-      const completed =
-        current.status !== "completed" && nextStatus === "completed"
-      if (completed) {
-        updates.completedAt = serverTimestamp()
-      } else if (nextStatus === "completed") {
-        updates.completedAt = current.completedAt
-      } else if (nextStatus === "archived") {
-        updates.completedAt = current.completedAt
-      } else {
-        updates.completedAt = null
-      }
+        if (Object.hasOwn(input, "title")) {
+          updates.title = normalizeTitle(input.title ?? "")
+        }
+        if (Object.hasOwn(input, "description")) {
+          updates.description = normalizeOptionalText(
+            input.description,
+            MAX_TASK_DESCRIPTION_LENGTH,
+          )
+        }
+        if (Object.hasOwn(input, "category")) {
+          updates.category = normalizeOptionalText(
+            input.category,
+            MAX_TASK_SHORT_TEXT_LENGTH,
+          )
+        }
+        if (Object.hasOwn(input, "project")) {
+          updates.project = normalizeOptionalText(
+            input.project,
+            MAX_TASK_SHORT_TEXT_LENGTH,
+          )
+        }
+        if (Object.hasOwn(input, "projectId")) {
+          updates.projectId = normalizeProjectId(input.projectId)
+        }
+        if (Object.hasOwn(input, "kanbanOrder")) {
+          updates.kanbanOrder = normalizeKanbanOrder(input.kanbanOrder)
+        }
+        if (Object.hasOwn(input, "dueDate")) {
+          updates.dueAt = normalizeDueDate(input.dueDate)
+        }
+        if (Object.hasOwn(input, "estimateMinutes")) {
+          updates.estimateMinutes = normalizeEstimate(input.estimateMinutes)
+        }
+        if (Object.hasOwn(input, "tags")) {
+          updates.tags = normalizeTags(input.tags)
+        }
+        const completed =
+          current.status !== "completed" && nextStatus === "completed"
+        if (completed) {
+          updates.completedAt = serverTimestamp()
+        } else if (nextStatus === "completed") {
+          updates.completedAt = current.completedAt
+        } else if (nextStatus === "archived") {
+          updates.completedAt = current.completedAt
+        } else {
+          updates.completedAt = null
+        }
 
-      transaction.update(reference, updates)
-      return { completed, xp: input.xp ?? current.xp }
-    },
-  )
+        let award: XpAwardResult | null = null
+        let preparedAward: Awaited<
+          ReturnType<typeof prepareTaskXpAward>
+        > | null = null
+        if (completed) {
+          if (!serverNow) {
+            throw new Error("Relógio de XP não sincronizado.")
+          }
+          preparedAward = await prepareTaskXpAward(
+            transaction,
+            uid,
+            taskId,
+            typeof updates.title === "string" ? updates.title : current.title,
+            nextPriority,
+            serverNow,
+          )
+          award = preparedAward.result
+        }
 
-  if (result.completed) publishCompletion(uid, taskId, result.xp)
+        transaction.update(reference, updates)
+        if (preparedAward) applyPreparedXpAward(transaction, preparedAward)
+        return { completed, award }
+      },
+    )
+
+  const result =
+    input.status === "completed"
+      ? await runWithXpServerTime(uid, executeUpdate)
+      : await executeUpdate(null)
+
+  if (result.completed && result.award) {
+    publishCompletion(uid, taskId, result.award)
+  }
   return result.completed
 }
 
@@ -315,6 +371,7 @@ export async function duplicateTask(uid: string, taskId: string) {
       title,
       status: "todo",
       kanbanOrder: null,
+      xp: getTaskXpReward(source.priority),
       completedAt: null,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
@@ -340,6 +397,7 @@ export function subscribeToTasks(
           return {
             id: taskSnapshot.id,
             ...taskData,
+            xp: getTaskXpReward(taskData.priority),
             projectId:
               typeof taskData.projectId === "string"
                 ? taskData.projectId

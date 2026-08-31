@@ -12,6 +12,7 @@ import { NavLink } from "react-router-dom"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { useAuth } from "@/features/auth"
+import { XpProgress } from "@/features/gamification"
 import type { NavigationItem } from "@/types/navigation"
 import { cn } from "@/utils/cn"
 
@@ -30,9 +31,7 @@ interface SidebarProps {
 
 export function Sidebar({ open, onClose }: SidebarProps) {
   const { profile } = useAuth()
-  const level = profile?.level ?? 1
   const xp = profile?.xp ?? 0
-  const levelProgress = Math.min(100, Math.max(0, (xp % 1000) / 10))
 
   return (
     <>
@@ -113,22 +112,11 @@ export function Sidebar({ open, onClose }: SidebarProps) {
         </nav>
 
         <div className="rounded-xl border border-primary/15 bg-primary/5 p-4">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <p className="text-xs text-muted-foreground">Sua progressão</p>
-              <p className="mt-1 font-semibold">
-                Nível {String(level).padStart(2, "0")}
-              </p>
-            </div>
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <p className="text-xs text-muted-foreground">Sua progressão</p>
             <Badge>{profile?.streak ?? 0} dias</Badge>
           </div>
-          <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-secondary">
-            <div
-              className="h-full rounded-full bg-primary transition-[width]"
-              style={{ width: `${levelProgress}%` }}
-            />
-          </div>
-          <p className="mt-2 text-xs text-muted-foreground">{xp} XP total</p>
+          <XpProgress totalXp={xp} compact />
         </div>
       </aside>
     </>

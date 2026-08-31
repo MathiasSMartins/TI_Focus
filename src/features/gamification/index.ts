@@ -1,2 +1,19 @@
-// Public API for XP, levels, streaks, and events will be exposed here.
-export {}
+export { XpProgress } from "@/features/gamification/components/xp-progress"
+export { XpRewardFeedback } from "@/features/gamification/components/xp-reward-feedback"
+export {
+  XP_DAILY_LIMIT,
+  XP_REWARD_BY_PRIORITY,
+  getLevelForXp,
+  getLevelProgress,
+  getLevelTitle,
+  getMinimumXpForLevel,
+  getTaskXpReward,
+} from "@/features/gamification/domain/xp-system"
+export { useXpTransactions } from "@/features/gamification/hooks/use-xp-transactions"
+export { GamificationProvider } from "@/features/gamification/providers/gamification-provider"
+export type {
+  XpAwardResult,
+  XpEventType,
+  XpTransaction,
+  XpTransactionDocument,
+} from "@/features/gamification/types/gamification"

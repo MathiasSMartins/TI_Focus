@@ -7,6 +7,10 @@ export interface TaskCompletedEvent {
   taskId: string
   xp: number
   occurredAt: Date
+  levelBefore?: number
+  levelAfter?: number
+  dailyLimitReached?: boolean
+  transactionId?: string
 }
 
 type TaskCompletedListener = (event: TaskCompletedEvent) => void
@@ -25,5 +29,7 @@ export function publishTaskCompleted(event: TaskCompletedEvent) {
 
 export function subscribeToTaskCompleted(listener: TaskCompletedListener) {
   taskCompletedListeners.add(listener)
-  return () => taskCompletedListeners.delete(listener)
+  return () => {
+    taskCompletedListeners.delete(listener)
+  }
 }
