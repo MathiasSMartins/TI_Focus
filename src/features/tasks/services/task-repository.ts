@@ -16,12 +16,14 @@ import {
   type WithFieldValue,
 } from "firebase/firestore"
 
+import { isITAreaId, type ITAreaId } from "@/config/it-area-config"
 import { getTaskXpReward, type XpAwardResult } from "@/features/gamification"
 import {
   applyPreparedXpAward,
   prepareTaskXpAward,
   runWithXpServerTime,
 } from "@/features/gamification/services/xp-repository"
+import type { UserProfile } from "@/features/profile/types/user-profile"
 import {
   publishTaskCompleted,
   TASK_COMPLETED,
@@ -66,6 +68,14 @@ function getTaskReference(uid: string, taskId: string) {
   return doc(getTaskCollection(uid), taskId) as DocumentReference<TaskDocument>
 }
 
+function getProfileReference(uid: string) {
+  return doc(
+    getFirestoreInstance(),
+    "users",
+    uid,
+  ) as DocumentReference<UserProfile>
+}
+
 function normalizeTitle(title: string) {
   const normalized = title.trim()
   if (!normalized) throw new Error("Informe um título para a tarefa.")
@@ -103,6 +113,12 @@ function normalizeKanbanOrder(value: number | null | undefined) {
   if (!Number.isFinite(value) || value < 0 || value > MAX_TASK_KANBAN_ORDER) {
     throw new Error("Posição Kanban inválida.")
   }
+  return value
+}
+
+function normalizeAreaId(value: ITAreaId | null | undefined) {
+  if (value == null) return null
+  if (!isITAreaId(value)) throw new Error("Área de TI inválida.")
   return value
 }
 
@@ -178,6 +194,7 @@ export async function createTask(uid: string, input: CreateTaskInput) {
   const status = normalizeStatus(input.status)
   const priority = normalizePriority(input.priority)
   const title = normalizeTitle(input.title)
+  const areaId = normalizeAreaId(input.areaId)
   const xp = getTaskXpReward(priority)
   const task: WithFieldValue<TaskDocument> = {
     title,
@@ -186,6 +203,7 @@ export async function createTask(uid: string, input: CreateTaskInput) {
       MAX_TASK_DESCRIPTION_LENGTH,
     ),
     category: normalizeOptionalText(input.category, MAX_TASK_SHORT_TEXT_LENGTH),
+    areaId,
     priority,
     status,
     project: normalizeOptionalText(input.project, MAX_TASK_SHORT_TEXT_LENGTH),
@@ -215,6 +233,7 @@ export async function createTask(uid: string, input: CreateTaskInput) {
           reference.id,
           title,
           priority,
+          areaId,
           serverNow,
         )
         transaction.set(reference, task)
@@ -250,6 +269,11 @@ export async function updateTask(
         const nextPriority = normalizePriority(
           input.priority ?? current.priority,
         )
+        const effectiveAreaId = Object.hasOwn(input, "areaId")
+          ? normalizeAreaId(input.areaId)
+          : isITAreaId(current.areaId)
+            ? current.areaId
+            : null
         const updates: Record<string, unknown> = {
           priority: nextPriority,
           xp: getTaskXpReward(nextPriority),
@@ -271,6 +295,9 @@ export async function updateTask(
             input.category,
             MAX_TASK_SHORT_TEXT_LENGTH,
           )
+        }
+        if (Object.hasOwn(input, "areaId")) {
+          updates.areaId = effectiveAreaId
         }
         if (Object.hasOwn(input, "project")) {
           updates.project = normalizeOptionalText(
@@ -319,6 +346,7 @@ export async function updateTask(
             taskId,
             typeof updates.title === "string" ? updates.title : current.title,
             nextPriority,
+            effectiveAreaId,
             serverNow,
           )
           award = preparedAward.result
@@ -355,12 +383,19 @@ export async function deleteTask(uid: string, taskId: string) {
 
 export async function duplicateTask(uid: string, taskId: string) {
   const sourceReference = getTaskReference(uid, taskId)
+  const profileReference = getProfileReference(uid)
   const duplicateReference = doc(getTaskCollection(uid))
 
   await runTransaction(getFirestoreInstance(), async (transaction) => {
-    const snapshot = await transaction.get(sourceReference)
-    if (!snapshot.exists()) throw new Error("Tarefa não encontrada.")
-    const source = snapshot.data()
+    const [sourceSnapshot, profileSnapshot] = await Promise.all([
+      transaction.get(sourceReference),
+      transaction.get(profileReference),
+    ])
+    if (!sourceSnapshot.exists()) throw new Error("Tarefa não encontrada.")
+    if (!profileSnapshot.exists()) throw new Error("Perfil não encontrado.")
+
+    const source = sourceSnapshot.data()
+    const primaryArea = profileSnapshot.data().primaryArea
     const suffix = " (cópia)"
     const title = `${source.title.slice(
       0,
@@ -370,6 +405,7 @@ export async function duplicateTask(uid: string, taskId: string) {
     const duplicate: WithFieldValue<TaskDocument> = {
       ...source,
       title,
+      areaId: isITAreaId(primaryArea) ? primaryArea : null,
       status: "todo",
       kanbanOrder: null,
       xp: getTaskXpReward(source.priority),
@@ -399,6 +435,7 @@ export function subscribeToTasks(
             id: taskSnapshot.id,
             ...taskData,
             xp: getTaskXpReward(taskData.priority),
+            areaId: isITAreaId(taskData.areaId) ? taskData.areaId : null,
             projectId:
               typeof taskData.projectId === "string"
                 ? taskData.projectId

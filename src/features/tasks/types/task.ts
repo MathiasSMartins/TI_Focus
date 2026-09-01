@@ -1,5 +1,7 @@
 import type { Timestamp } from "firebase/firestore"
 
+import type { ITAreaId } from "@/config/it-area-config"
+
 export const TASK_STATUSES = [
   { id: "backlog", label: "Backlog" },
   { id: "todo", label: "A Fazer" },
@@ -31,6 +33,7 @@ export interface TaskDocument {
   title: string
   description: string | null
   category: string | null
+  areaId?: ITAreaId | null
   priority: TaskPriority
   status: TaskStatus
   project: string | null
@@ -53,6 +56,7 @@ export interface CreateTaskInput {
   title: string
   description?: string | null
   category?: string | null
+  areaId?: ITAreaId | null
   priority?: TaskPriority
   status?: TaskStatus
   project?: string | null
@@ -67,6 +71,7 @@ export interface UpdateTaskInput {
   title?: string
   description?: string | null
   category?: string | null
+  areaId?: ITAreaId | null
   priority?: TaskPriority
   status?: TaskStatus
   project?: string | null

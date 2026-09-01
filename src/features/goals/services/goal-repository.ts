@@ -16,10 +16,14 @@ import {
   type WithFieldValue,
 } from "firebase/firestore"
 
+import { getCivilPeriod } from "@/features/goals/domain/civil-period"
 import {
-  getCivilPeriod,
-  differenceInCivilDays,
-} from "@/features/goals/domain/civil-period"
+  findGoalProgressForScope,
+  getScopedGoalProgressId,
+  matchesGoalProgressScope,
+  resolveGoalProgressForSource,
+  type ResolvedGoalProgress,
+} from "@/features/goals/domain/goal-progress-scope"
 import { publishGoalCompleted } from "@/features/goals/events/goal-events"
 import type {
   GoalCadence,
@@ -52,7 +56,10 @@ interface GoalSourceInput {
   showFeedback?: boolean
 }
 
-const reconciliationByUser = new Map<string, Promise<void>>()
+import { createReconciliationRunner } from "@/utils/reconciliation-runner"
+
+const RECONCILIATION_TTL_MS = 30_000
+const runReconciliation = createReconciliationRunner(RECONCILIATION_TTL_MS)
 
 function getFirestoreInstance(): Firestore {
   if (!firestoreDb)
@@ -90,13 +97,13 @@ function getEvidenceReference(uid: string, evidenceId: string) {
   ) as DocumentReference<GoalEvidenceDocument>
 }
 
-function getCompletionReference(uid: string, progressId: string) {
+function getCompletionReference(uid: string, completionId: string) {
   return doc(
     getFirestoreInstance(),
     "users",
     uid,
     "goalCompletions",
-    progressId,
+    completionId,
   ) as DocumentReference<GoalCompletionDocument>
 }
 
@@ -116,6 +123,22 @@ function getProfileReference(uid: string) {
     "users",
     uid,
   ) as DocumentReference<UserProfile>
+}
+
+async function loadGoalProgressCandidates(
+  uid: string,
+  cadence: GoalCadence,
+): Promise<ResolvedGoalProgress[]> {
+  const snapshot = await getDocs(
+    query(
+      collection(getFirestoreInstance(), "users", uid, "goalProgress"),
+      where("cadence", "==", cadence),
+    ),
+  )
+  return snapshot.docs.map((item) => ({
+    id: item.id,
+    progress: item.data() as GoalProgressDocument,
+  }))
 }
 
 function progressFromGoal(
@@ -178,11 +201,28 @@ export async function saveGoal(
       timezone,
       cadence,
     )
-    const goalReference = getGoalReference(uid, cadence)
-    const progressReference = getProgressReference(
-      uid,
-      `${cadence}__${currentPeriod.key}`,
+    const progressCandidates = await loadGoalProgressCandidates(uid, cadence)
+    const scopedProgress = findGoalProgressForScope(
+      progressCandidates,
+      cadence,
+      currentPeriod,
+      timezone,
     )
+    const progressId =
+      scopedProgress?.id ??
+      getScopedGoalProgressId(cadence, currentPeriod, timezone)
+    const serverNowMillis = serverNow.toMillis()
+    const isTimezoneCutover = progressCandidates.some(
+      ({ progress }) =>
+        !matchesGoalProgressScope(progress, cadence, currentPeriod, timezone) &&
+        serverNowMillis >= progress.periodStartsAt.toMillis() &&
+        serverNowMillis < progress.periodEndsAt.toMillis(),
+    )
+    const progressEligibleFrom = isTimezoneCutover
+      ? serverNow
+      : Timestamp.fromDate(currentPeriod.startsAt)
+    const goalReference = getGoalReference(uid, cadence)
+    const progressReference = getProgressReference(uid, progressId)
 
     await runTransaction(getFirestoreInstance(), async (transaction) => {
       const [goalSnapshot, progressSnapshot] = await Promise.all([
@@ -198,7 +238,13 @@ export async function saveGoal(
       ) {
         transaction.set(
           progressReference,
-          progressFromGoal(uid, currentGoal, timezone, currentPeriod),
+          progressFromGoal(
+            uid,
+            currentGoal,
+            timezone,
+            currentPeriod,
+            progressEligibleFrom,
+          ),
         )
       }
 
@@ -288,11 +334,27 @@ export async function ensureCurrentGoalProgress(uid: string, timezone: string) {
   await runWithXpServerTime(uid, async (serverNow) => {
     for (const cadence of GOAL_CADENCES) {
       const period = getCivilPeriod(serverNow.toDate(), timezone, cadence)
-      const goalReference = getGoalReference(uid, cadence)
-      const progressReference = getProgressReference(
-        uid,
-        `${cadence}__${period.key}`,
+      const progressCandidates = await loadGoalProgressCandidates(uid, cadence)
+      const scopedProgress = findGoalProgressForScope(
+        progressCandidates,
+        cadence,
+        period,
+        timezone,
       )
+      const progressId =
+        scopedProgress?.id ?? getScopedGoalProgressId(cadence, period, timezone)
+      const serverNowMillis = serverNow.toMillis()
+      const isTimezoneCutover = progressCandidates.some(
+        ({ progress }) =>
+          !matchesGoalProgressScope(progress, cadence, period, timezone) &&
+          serverNowMillis >= progress.periodStartsAt.toMillis() &&
+          serverNowMillis < progress.periodEndsAt.toMillis(),
+      )
+      const eligibleFrom = isTimezoneCutover
+        ? serverNow
+        : Timestamp.fromDate(period.startsAt)
+      const goalReference = getGoalReference(uid, cadence)
+      const progressReference = getProgressReference(uid, progressId)
       await runTransaction(getFirestoreInstance(), async (transaction) => {
         const [goalSnapshot, progressSnapshot] = await Promise.all([
           transaction.get(goalReference),
@@ -303,60 +365,39 @@ export async function ensureCurrentGoalProgress(uid: string, timezone: string) {
         if (!goal.active || period.key < goal.effectiveFromPeriodKey) return
         transaction.set(
           progressReference,
-          progressFromGoal(uid, goal, timezone, period),
+          progressFromGoal(uid, goal, timezone, period, eligibleFrom),
         )
       })
     }
   })
 }
 
-interface ResolvedGoalProgress {
-  id: string
-  progress: GoalProgressDocument
-}
-
 type GoalProgressByCadence = Map<GoalCadence, readonly ResolvedGoalProgress[]>
-
-function resolveProgressForSource(
-  candidates: readonly ResolvedGoalProgress[],
-  occurredAt: Timestamp,
-) {
-  const occurredAtMillis = occurredAt.toMillis()
-  const matches = candidates
-    .filter(
-      ({ progress }) =>
-        occurredAtMillis >= progress.periodStartsAt.toMillis() &&
-        occurredAtMillis < progress.periodEndsAt.toMillis(),
-    )
-    .sort(
-      (left, right) =>
-        left.progress.createdAt.toMillis() -
-          right.progress.createdAt.toMillis() ||
-        left.id.localeCompare(right.id),
-    )
-  return matches[0] ?? null
-}
 
 async function findProgressForSource(
   uid: string,
   cadence: GoalCadence,
   occurredAt: Timestamp,
+  timezone: string,
+  period: ReturnType<typeof getCivilPeriod>,
   candidates?: readonly ResolvedGoalProgress[],
 ): Promise<ResolvedGoalProgress | null> {
-  if (candidates) return resolveProgressForSource(candidates, occurredAt)
+  if (candidates) {
+    return resolveGoalProgressForSource(
+      candidates,
+      occurredAt,
+      cadence,
+      period,
+      timezone,
+    )
+  }
 
-  const snapshot = await getDocs(
-    query(
-      collection(getFirestoreInstance(), "users", uid, "goalProgress"),
-      where("cadence", "==", cadence),
-    ),
-  )
-  return resolveProgressForSource(
-    snapshot.docs.map((item) => ({
-      id: item.id,
-      progress: item.data() as GoalProgressDocument,
-    })),
+  return resolveGoalProgressForSource(
+    await loadGoalProgressCandidates(uid, cadence),
     occurredAt,
+    cadence,
+    period,
+    timezone,
   )
 }
 
@@ -366,18 +407,22 @@ async function processSourceForCadence(
   input: GoalSourceInput,
   progressCandidates?: readonly ResolvedGoalProgress[],
 ) {
-  const resolvedProgress = await findProgressForSource(
-    uid,
-    cadence,
-    input.occurredAt,
-    progressCandidates,
-  )
   const fallbackPeriod = getCivilPeriod(
     input.occurredAt.toDate(),
     input.timezone,
     cadence,
   )
-  const progressId = resolvedProgress?.id ?? `${cadence}__${fallbackPeriod.key}`
+  const resolvedProgress = await findProgressForSource(
+    uid,
+    cadence,
+    input.occurredAt,
+    input.timezone,
+    fallbackPeriod,
+    progressCandidates,
+  )
+  const progressId =
+    resolvedProgress?.id ??
+    getScopedGoalProgressId(cadence, fallbackPeriod, input.timezone)
   const evidenceId = `${cadence}__${input.sourceType}__${input.sourceId}`
 
   const result = await runWithXpServerTime(uid, async (serverNow) => {
@@ -441,6 +486,7 @@ async function processSourceForCadence(
             createdAt: serverNow,
             updatedAt: serverNow,
           } satisfies GoalProgressDocument)
+      const completionId = `${cadence}__${progress.periodKey}`
       const eligibleFrom = progress.eligibleFrom ?? progress.createdAt
       const occurredAtMillis = input.occurredAt.toMillis()
       if (
@@ -465,13 +511,14 @@ async function processSourceForCadence(
 
       if (newlyCompleted) {
         const completionSnapshot = await transaction.get(
-          getCompletionReference(uid, progressId),
+          getCompletionReference(uid, completionId),
         )
         completionExists = completionSnapshot.exists()
         if (!completionExists) {
           preparedAward = await prepareGoalXpAward(
             transaction,
             uid,
+            completionId,
             progressId,
             cadence,
             progress.rewardXp,
@@ -486,30 +533,43 @@ async function processSourceForCadence(
               best: 0,
               productiveDays: 0,
               lastProcessedProgressId: "",
+              lastCompletedProgressId: undefined,
               lastCompletedPeriodKey: null,
               lastCompletedAt: null,
             }
+            const priorProgressId =
+              current.lastCompletedProgressId ??
+              (current.lastCompletedPeriodKey
+                ? `daily__${current.lastCompletedPeriodKey}`
+                : null)
+            const priorProgressSnapshot = priorProgressId
+              ? await transaction.get(
+                  getProgressReference(uid, priorProgressId),
+                )
+              : null
+            const priorProgress = priorProgressSnapshot?.data() ?? null
             if (current.lastCompletedPeriodKey !== progress.periodKey) {
-              const difference = current.lastCompletedPeriodKey
-                ? differenceInCivilDays(
-                    progress.periodKey,
-                    current.lastCompletedPeriodKey,
-                  )
-                : null
-              const advancesChain = difference === null || difference > 0
-              const streakCurrent =
-                difference === null
-                  ? 1
-                  : difference === 1
-                    ? current.current + 1
-                    : difference > 1
-                      ? 1
-                      : current.current
+              const advancesChain =
+                !priorProgress ||
+                progress.periodStartsAt.toMillis() >
+                  priorProgress.periodStartsAt.toMillis()
+              const isConsecutive =
+                !!priorProgress &&
+                progress.periodStartsAt.toMillis() ===
+                  priorProgress.periodEndsAt.toMillis()
+              const streakCurrent = advancesChain
+                ? isConsecutive
+                  ? current.current + 1
+                  : 1
+                : current.current
               nextStreak = {
                 current: streakCurrent,
                 best: Math.max(current.best, streakCurrent),
                 productiveDays: current.productiveDays + 1,
                 lastProcessedProgressId: progressId,
+                lastCompletedProgressId: advancesChain
+                  ? progressId
+                  : (priorProgressId ?? progressId),
                 lastCompletedPeriodKey: advancesChain
                   ? progress.periodKey
                   : current.lastCompletedPeriodKey,
@@ -543,7 +603,7 @@ async function processSourceForCadence(
       })
 
       if (newlyCompleted && !completionExists && preparedAward) {
-        transaction.set(getCompletionReference(uid, progressId), {
+        transaction.set(getCompletionReference(uid, completionId), {
           progressId,
           cadence,
           periodKey: progress.periodKey,
@@ -851,14 +911,12 @@ async function reconcileUserGoals(uid: string, timezone: string) {
   }
 }
 
-export function reconcileGoals(uid: string, timezone: string) {
-  const current = reconciliationByUser.get(uid)
-  if (current) return current
-  const reconciliation = reconcileUserGoals(uid, timezone).finally(() =>
-    reconciliationByUser.delete(uid),
+export function reconcileGoals(uid: string, timezone: string, force = false) {
+  return runReconciliation(
+    `${uid}:${timezone}`,
+    () => reconcileUserGoals(uid, timezone),
+    force,
   )
-  reconciliationByUser.set(uid, reconciliation)
-  return reconciliation
 }
 
 export function subscribeToGoals(

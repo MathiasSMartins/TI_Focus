@@ -228,8 +228,16 @@ service cloud.firestore {
       return /databases/$(database)/documents/users/$(userId)/achievementStats/main;
     }
 
+    function achievementAreaStatsPath(userId, areaId) {
+      return /databases/$(database)/documents/users/$(userId)/achievementAreaStats/$(areaId);
+    }
+
     function achievementEvidencePath(userId, evidenceId) {
       return /databases/$(database)/documents/users/$(userId)/achievementEvidence/$(evidenceId);
+    }
+
+    function achievementAreaEvidencePath(userId, evidenceId) {
+      return /databases/$(database)/documents/users/$(userId)/achievementAreaEvidence/$(evidenceId);
     }
 
     function achievementUnlockPath(userId, achievementId) {
@@ -252,8 +260,8 @@ service cloud.firestore {
       return /databases/$(database)/documents/users/$(userId)/goalEvidence/$(evidenceId);
     }
 
-    function goalCompletionPath(userId, progressId) {
-      return /databases/$(database)/documents/users/$(userId)/goalCompletions/$(progressId);
+    function goalCompletionPath(userId, completionId) {
+      return /databases/$(database)/documents/users/$(userId)/goalCompletions/$(completionId);
     }
 
     function goalStreakPath(userId) {
@@ -364,6 +372,18 @@ service cloud.firestore {
           && goalMatchesProgress(get(sourcePath).data, data));
     }
 
+    function isValidGoalProgressId(progressId, data) {
+      return progressId == data.cadence + '__' + data.periodKey
+        || (progressId is string
+          && progressId.size() <= 122
+          && progressId.matches(
+            data.cadence
+              + '__'
+              + data.periodKey
+              + '__v2__[0-9]{13}__[0-9]{13}__[A-Za-z0-9._+~-]{1,64}'
+          ));
+    }
+
     function hasValidGoalProgressShape(userId, progressId, data) {
       return data.keys().hasOnly([
           'userId',
@@ -403,7 +423,7 @@ service cloud.firestore {
         ])
         && data.userId == userId
         && isValidGoalCadence(data.cadence)
-        && progressId == data.cadence + '__' + data.periodKey
+        && isValidGoalProgressId(progressId, data)
         && data.periodKey is string
         && data.periodKey.size() > 0
         && data.periodKey.size() <= 64
@@ -454,6 +474,9 @@ service cloud.firestore {
       let evidencePath = goalEvidencePath(userId, after.lastEvidenceId);
       let evidence = getAfter(evidencePath).data;
       let nextValue = before.current + evidence.delta;
+      let completionId = after.cadence + '__' + after.periodKey;
+      let completionPath = goalCompletionPath(userId, completionId);
+      let completion = getAfter(completionPath).data;
       return hasValidGoalProgressShape(userId, progressId, after)
         && after.lastEvidenceId is string
         && after.lastEvidenceId != before.lastEvidenceId
@@ -480,8 +503,11 @@ service cloud.firestore {
           : (nextValue >= before.target
             ? (after.completed
               && after.completedAt == request.time
-              && !exists(goalCompletionPath(userId, progressId))
-              && existsAfter(goalCompletionPath(userId, progressId)))
+              && ((exists(completionPath)
+                  && completion.cadence == after.cadence
+                  && completion.periodKey == after.periodKey)
+                || (!exists(completionPath)
+                  && existsAfter(completionPath))))
             : (after.completed == false && after.completedAt == null)))
         && after.diff(before).affectedKeys().hasOnly([
           'current',
@@ -594,12 +620,12 @@ service cloud.firestore {
           ));
     }
 
-    function hasValidGoalCompletionCreate(userId, progressId) {
+    function hasValidGoalCompletionCreate(userId, completionId) {
       let data = request.resource.data;
-      let progressPath = goalProgressPath(userId, progressId);
+      let progressPath = goalProgressPath(userId, data.progressId);
       let before = get(progressPath).data;
       let after = getAfter(progressPath).data;
-      let transactionPath = xpTransactionPath(userId, 'goal__' + progressId);
+      let transactionPath = xpTransactionPath(userId, 'goal__' + completionId);
       let xpTransaction = getAfter(transactionPath).data;
       return data.keys().hasOnly([
           'progressId',
@@ -621,6 +647,11 @@ service cloud.firestore {
           'rewardXp',
           'completedAt'
         ])
+        && data.progressId is string
+        && data.progressId.size() > 0
+        && data.progressId.size() <= 192
+        && !data.progressId.matches('.*[/].*')
+        && completionId == data.cadence + '__' + data.periodKey
         && exists(progressPath)
         && existsAfter(progressPath)
         && before.completed == false
@@ -628,7 +659,6 @@ service cloud.firestore {
         && after.completed == true
         && after.completedAt == request.time
         && after.current >= after.target
-        && data.progressId == progressId
         && data.cadence == after.cadence
         && data.periodKey == after.periodKey
         && data.metric == after.metric
@@ -639,7 +669,7 @@ service cloud.firestore {
         && !exists(transactionPath)
         && existsAfter(transactionPath)
         && xpTransaction.eventType == 'GOAL_COMPLETED'
-        && xpTransaction.progressId == progressId;
+        && xpTransaction.progressId == data.progressId;
     }
 
     function hasValidGoalStreakShape(data) {
@@ -648,6 +678,7 @@ service cloud.firestore {
           'best',
           'productiveDays',
           'lastProcessedProgressId',
+          'lastCompletedProgressId',
           'lastCompletedPeriodKey',
           'lastCompletedAt',
           'updatedAt'
@@ -674,6 +705,11 @@ service cloud.firestore {
         && data.lastProcessedProgressId.size() > 0
         && data.lastProcessedProgressId.size() <= 192
         && !data.lastProcessedProgressId.matches('.*[/].*')
+        && (!data.keys().hasAny(['lastCompletedProgressId'])
+          || (data.lastCompletedProgressId is string
+            && data.lastCompletedProgressId.size() > 0
+            && data.lastCompletedProgressId.size() <= 192
+            && !data.lastCompletedProgressId.matches('.*[/].*')))
         && data.lastCompletedPeriodKey is string
         && data.lastCompletedPeriodKey.size() > 0
         && data.lastCompletedPeriodKey.size() <= 64
@@ -682,9 +718,13 @@ service cloud.firestore {
     }
 
     function hasNewDailyCompletionForStreak(userId, data) {
-      let completionPath = goalCompletionPath(
+      let progress = getAfter(goalProgressPath(
         userId,
         data.lastProcessedProgressId
+      )).data;
+      let completionPath = goalCompletionPath(
+        userId,
+        'daily__' + progress.periodKey
       );
       let completion = getAfter(completionPath).data;
       return !exists(completionPath)
@@ -696,9 +736,13 @@ service cloud.firestore {
 
     function hasValidGoalStreakCreate(userId, streakId) {
       let after = request.resource.data;
-      let completion = getAfter(goalCompletionPath(
+      let progress = getAfter(goalProgressPath(
         userId,
         after.lastProcessedProgressId
+      )).data;
+      let completion = getAfter(goalCompletionPath(
+        userId,
+        'daily__' + progress.periodKey
       )).data;
       return streakId == 'main'
         && hasValidGoalStreakShape(after)
@@ -706,6 +750,7 @@ service cloud.firestore {
         && after.current == 1
         && after.best == 1
         && after.productiveDays == 1
+        && after.lastCompletedProgressId == after.lastProcessedProgressId
         && after.lastCompletedPeriodKey == completion.periodKey
         && after.lastCompletedAt == request.time
         && after.updatedAt == request.time
@@ -715,17 +760,22 @@ service cloud.firestore {
     function hasValidGoalStreakUpdate(userId, streakId) {
       let before = resource.data;
       let after = request.resource.data;
-      let completion = getAfter(goalCompletionPath(
-        userId,
-        after.lastProcessedProgressId
-      )).data;
       let newProgress = getAfter(goalProgressPath(
         userId,
         after.lastProcessedProgressId
       )).data;
+      let completion = getAfter(goalCompletionPath(
+        userId,
+        'daily__' + newProgress.periodKey
+      )).data;
+      let priorProgressId = before.keys().hasAny([
+          'lastCompletedProgressId'
+        ])
+        ? before.lastCompletedProgressId
+        : 'daily__' + before.lastCompletedPeriodKey;
       let priorProgress = get(goalProgressPath(
         userId,
-        'daily__' + before.lastCompletedPeriodKey
+        priorProgressId
       )).data;
       let advances = newProgress.periodStartsAt > priorProgress.periodStartsAt;
       let consecutive = newProgress.periodStartsAt == priorProgress.periodEndsAt;
@@ -738,6 +788,9 @@ service cloud.firestore {
         && hasNewDailyCompletionForStreak(userId, after)
         && after.productiveDays == before.productiveDays + 1
         && after.lastProcessedProgressId != before.lastProcessedProgressId
+        && after.lastCompletedProgressId == (advances
+          ? after.lastProcessedProgressId
+          : priorProgressId)
         && (advances
           ? (after.current == expectedCurrent
             && after.best == expectedBest
@@ -837,6 +890,44 @@ service cloud.firestore {
         && request.time >= current.expectedEndAt;
     }
 
+    function isAreaAchievement(achievementId) {
+      return achievementId == 'area-information-security-specialist'
+        || achievementId == 'area-software-development-specialist'
+        || achievementId == 'area-infrastructure-specialist'
+        || achievementId == 'area-support-specialist'
+        || achievementId == 'area-devops-sre-specialist'
+        || achievementId == 'area-data-analytics-specialist'
+        || achievementId == 'area-cloud-specialist'
+        || achievementId == 'area-qa-testing-specialist'
+        || achievementId == 'area-it-project-management-specialist'
+        || achievementId == 'area-networks-specialist'
+        || achievementId == 'area-database-specialist'
+        || achievementId == 'area-other-specialist';
+    }
+
+    function achievementArea(achievementId) {
+      return achievementId == 'area-information-security-specialist'
+          ? 'information-security'
+        : achievementId == 'area-software-development-specialist'
+          ? 'software-development'
+        : achievementId == 'area-infrastructure-specialist'
+          ? 'infrastructure'
+        : achievementId == 'area-support-specialist' ? 'support'
+        : achievementId == 'area-devops-sre-specialist' ? 'devops-sre'
+        : achievementId == 'area-data-analytics-specialist' ? 'data-analytics'
+        : achievementId == 'area-cloud-specialist' ? 'cloud'
+        : achievementId == 'area-qa-testing-specialist' ? 'qa-testing'
+        : achievementId == 'area-it-project-management-specialist'
+          ? 'it-project-management'
+        : achievementId == 'area-networks-specialist' ? 'networks'
+        : achievementId == 'area-database-specialist' ? 'database'
+        : 'other';
+    }
+
+    function achievementDefinitionVersion(achievementId) {
+      return isAreaAchievement(achievementId) ? 2 : 1;
+    }
+
     function isKnownAchievement(achievementId) {
       return achievementId == 'first-mission'
         || achievementId == 'tasks-10'
@@ -854,7 +945,8 @@ service cloud.firestore {
         || achievementId == 'streak-365'
         || achievementId == 'perfect-week'
         || achievementId == 'first-project'
-        || achievementId == 'projects-10';
+        || achievementId == 'projects-10'
+        || isAreaAchievement(achievementId);
     }
 
     function isAchievementSourceAvailable(achievementId) {
@@ -873,11 +965,13 @@ service cloud.firestore {
         || achievementId == 'streak-100'
         || achievementId == 'streak-365'
         || achievementId == 'first-project'
-        || achievementId == 'projects-10';
+        || achievementId == 'projects-10'
+        || isAreaAchievement(achievementId);
     }
 
     function achievementMetric(achievementId) {
-      return achievementId == 'first-mission'
+      return isAreaAchievement(achievementId) ? 'areaTasksCompleted'
+        : achievementId == 'first-mission'
           || achievementId == 'tasks-10'
           || achievementId == 'tasks-50'
           || achievementId == 'tasks-100' ? 'tasksCompleted'
@@ -898,7 +992,8 @@ service cloud.firestore {
     }
 
     function achievementTarget(achievementId) {
-      return achievementId == 'first-mission' ? 1
+      return isAreaAchievement(achievementId) ? 5
+        : achievementId == 'first-mission' ? 1
         : achievementId == 'tasks-10' ? 10
         : achievementId == 'tasks-50' ? 50
         : achievementId == 'tasks-100' ? 100
@@ -919,7 +1014,8 @@ service cloud.firestore {
     }
 
     function achievementXp(achievementId) {
-      return achievementId == 'first-mission' ? 25
+      return isAreaAchievement(achievementId) ? 75
+        : achievementId == 'first-mission' ? 25
         : achievementId == 'tasks-10' ? 50
         : achievementId == 'tasks-50' ? 150
         : achievementId == 'tasks-100' ? 300
@@ -940,7 +1036,30 @@ service cloud.firestore {
     }
 
     function achievementName(achievementId) {
-      return achievementId == 'first-mission' ? 'Primeira Missão'
+      return achievementId == 'area-information-security-specialist'
+          ? 'Especialista em Segurança da Informação'
+        : achievementId == 'area-software-development-specialist'
+          ? 'Especialista em Desenvolvimento de Software'
+        : achievementId == 'area-infrastructure-specialist'
+          ? 'Especialista em Infraestrutura'
+        : achievementId == 'area-support-specialist'
+          ? 'Especialista em Suporte'
+        : achievementId == 'area-devops-sre-specialist'
+          ? 'Especialista em DevOps / SRE'
+        : achievementId == 'area-data-analytics-specialist'
+          ? 'Especialista em Dados / Data Analytics'
+        : achievementId == 'area-cloud-specialist'
+          ? 'Especialista em Cloud'
+        : achievementId == 'area-qa-testing-specialist'
+          ? 'Especialista em QA / Testes'
+        : achievementId == 'area-it-project-management-specialist'
+          ? 'Especialista em Gestão de Projetos de TI'
+        : achievementId == 'area-networks-specialist'
+          ? 'Especialista em Redes'
+        : achievementId == 'area-database-specialist'
+          ? 'Especialista em Banco de Dados'
+        : achievementId == 'area-other-specialist' ? 'Especialista em TI'
+        : achievementId == 'first-mission' ? 'Primeira Missão'
         : achievementId == 'tasks-10' ? '10 tarefas concluídas'
         : achievementId == 'tasks-50' ? '50 tarefas concluídas'
         : achievementId == 'tasks-100' ? '100 tarefas concluídas'
@@ -962,7 +1081,8 @@ service cloud.firestore {
 
     function achievementProgress(stats, achievementId) {
       let metric = achievementMetric(achievementId);
-      return metric == 'tasksCompleted' ? stats.tasksCompleted
+      return metric == 'areaTasksCompleted' ? stats.tasksCompleted
+        : metric == 'tasksCompleted' ? stats.tasksCompleted
         : metric == 'pomodorosCompleted' ? stats.pomodorosCompleted
         : metric == 'bestStreak' ? stats.bestStreak
         : metric == 'perfectWeeks' ? stats.perfectWeeks
@@ -989,6 +1109,34 @@ service cloud.firestore {
 
     function hasXpTransactionAfter(userId, taskId) {
       return existsAfter(xpTransactionPath(userId, taskId));
+    }
+
+    function hasValidOptionalTaskArea(data) {
+      return !data.keys().hasAny(['areaId'])
+        || data.areaId == null
+        || isValidArea(data.areaId);
+    }
+
+    function isTaskAreaUnassigned(data) {
+      return !data.keys().hasAny(['areaId']) || data.areaId == null;
+    }
+
+    function hasEquivalentTaskArea(left, right) {
+      return (isTaskAreaUnassigned(left) && isTaskAreaUnassigned(right))
+        || (left.keys().hasAny(['areaId'])
+          && right.keys().hasAny(['areaId'])
+          && left.areaId != null
+          && left.areaId == right.areaId);
+    }
+
+    function hasValidTaskAreaForCreate(userId) {
+      let data = request.resource.data;
+      return isTaskAreaUnassigned(data)
+        || data.areaId == get(profilePath(userId)).data.primaryArea;
+    }
+
+    function hasUnchangedTaskArea() {
+      return hasEquivalentTaskArea(resource.data, request.resource.data);
     }
 
     function isValidOptionalTaskText(value, maximumSize) {
@@ -1064,6 +1212,7 @@ service cloud.firestore {
           'title',
           'description',
           'category',
+          'areaId',
           'priority',
           'status',
           'project',
@@ -1098,6 +1247,7 @@ service cloud.firestore {
         && data.title.matches('.*\\S.*')
         && isValidOptionalTaskText(data.description, 5000)
         && isValidOptionalTaskText(data.category, 80)
+        && hasValidOptionalTaskArea(data)
         && isValidTaskPriority(data.priority)
         && isValidTaskStatus(data.status)
         && isValidOptionalTaskText(data.project, 80)
@@ -1265,14 +1415,36 @@ service cloud.firestore {
         ]);
     }
 
-    function hasValidXpProfileTransactionIdentity(transactionId, xpTransaction) {
+    function hasValidGoalXpProfileTransactionIdentity(
+      userId,
+      transactionId,
+      xpTransaction
+    ) {
+      let progress = getAfter(goalProgressPath(
+        userId,
+        xpTransaction.progressId
+      )).data;
+      return xpTransaction.eventType == 'GOAL_COMPLETED'
+        && progress.cadence == xpTransaction.cadence
+        && transactionId
+          == 'goal__' + xpTransaction.cadence + '__' + progress.periodKey;
+    }
+
+    function hasValidXpProfileTransactionIdentity(
+      userId,
+      transactionId,
+      xpTransaction
+    ) {
       return (xpTransaction.eventType == 'TASK_COMPLETED'
           && xpTransaction.taskId == transactionId)
         || (xpTransaction.eventType == 'ACHIEVEMENT_UNLOCKED'
           && transactionId
             == achievementTransactionId(xpTransaction.achievementId))
-        || (xpTransaction.eventType == 'GOAL_COMPLETED'
-          && transactionId == 'goal__' + xpTransaction.progressId);
+        || hasValidGoalXpProfileTransactionIdentity(
+          userId,
+          transactionId,
+          xpTransaction
+        );
     }
 
     function hasValidXpProfileUpdate(userId) {
@@ -1289,6 +1461,7 @@ service cloud.firestore {
         && existsAfter(transactionPath)
         && xpTransaction.userId == userId
         && hasValidXpProfileTransactionIdentity(
+          userId,
           transactionId,
           xpTransaction
         )
@@ -1326,9 +1499,13 @@ service cloud.firestore {
       let before = resource.data;
       let after = request.resource.data;
       let streak = getAfter(goalStreakPath(userId)).data;
+      let progress = getAfter(goalProgressPath(
+        userId,
+        streak.lastProcessedProgressId
+      )).data;
       let transactionPath = xpTransactionPath(
         userId,
-        'goal__' + streak.lastProcessedProgressId
+        'goal__' + progress.cadence + '__' + progress.periodKey
       );
       let xpTransaction = getAfter(transactionPath).data;
       return after.xp == before.xp
@@ -1370,6 +1547,7 @@ service cloud.firestore {
           'eventType',
           'taskId',
           'taskTitle',
+          'areaId',
           'createdAt',
           'xpBefore',
           'xpAfter',
@@ -1397,6 +1575,8 @@ service cloud.firestore {
           ? 'Limite diário de XP atingido'
           : 'Conclusão de tarefa')
         && data.taskTitle == taskAfter.title
+        && hasValidOptionalTaskArea(data)
+        && hasEquivalentTaskArea(data, taskAfter)
         && data.createdAt == request.time
         && data.xpBefore == profileBefore.xp
         && data.xpAfter == profileBefore.xp + expectedAmount
@@ -1423,7 +1603,10 @@ service cloud.firestore {
 
     function hasValidGoalXpTransactionCreate(userId, transactionId) {
       let data = request.resource.data;
-      let completionPath = goalCompletionPath(userId, data.progressId);
+      let progressPath = goalProgressPath(userId, data.progressId);
+      let progress = getAfter(progressPath).data;
+      let completionId = data.cadence + '__' + progress.periodKey;
+      let completionPath = goalCompletionPath(userId, completionId);
       let completion = getAfter(completionPath).data;
       let userProfilePath = profilePath(userId);
       let profileBefore = get(userProfilePath).data;
@@ -1465,7 +1648,9 @@ service cloud.firestore {
         && data.progressId.size() <= 192
         && !data.progressId.matches('.*[/].*')
         && isValidGoalCadence(data.cadence)
-        && transactionId == 'goal__' + data.progressId
+        && existsAfter(progressPath)
+        && progress.cadence == data.cadence
+        && transactionId == 'goal__' + completionId
         && data.amount == expectedAmount
         && data.reason == (expectedAmount == 0
           ? 'Limite diário de XP atingido'
@@ -1723,9 +1908,146 @@ service cloud.firestore {
         && hasMatchingStatsIncrementForEvidence(userId, evidenceId, data);
     }
 
+    function hasValidAchievementAreaStatsShape(data, areaId) {
+      return data.keys().hasOnly([
+          'areaId',
+          'tasksCompleted',
+          'lastEvidenceId',
+          'updatedAt'
+        ])
+        && data.keys().hasAll([
+          'areaId',
+          'tasksCompleted',
+          'lastEvidenceId',
+          'updatedAt'
+        ])
+        && isValidArea(areaId)
+        && data.areaId == areaId
+        && data.tasksCompleted is int
+        && data.tasksCompleted >= 0
+        && data.tasksCompleted <= 1000000000
+        && (data.lastEvidenceId == null
+          || (data.lastEvidenceId is string
+            && data.lastEvidenceId.size() > 0
+            && data.lastEvidenceId.size() <= 192
+            && !data.lastEvidenceId.matches('.*[/].*')))
+        && data.updatedAt is timestamp;
+    }
+
+    function hasValidAchievementAreaStatsCreate(areaId) {
+      let data = request.resource.data;
+      return hasValidAchievementAreaStatsShape(data, areaId)
+        && data.tasksCompleted == 0
+        && data.lastEvidenceId == null
+        && data.updatedAt == request.time;
+    }
+
+    function hasValidAchievementAreaStatsUpdate(userId, areaId) {
+      let before = resource.data;
+      let after = request.resource.data;
+      let evidenceId = after.lastEvidenceId;
+      let evidencePath = achievementAreaEvidencePath(userId, evidenceId);
+      let evidence = getAfter(evidencePath).data;
+      return hasValidAchievementAreaStatsShape(after, areaId)
+        && before.areaId == areaId
+        && evidenceId is string
+        && evidenceId != before.lastEvidenceId
+        && !exists(evidencePath)
+        && existsAfter(evidencePath)
+        && evidence.areaId == areaId
+        && evidence.metric == 'areaTasksCompleted'
+        && evidence.recordedAt == request.time
+        && after.tasksCompleted == before.tasksCompleted + 1
+        && after.updatedAt == request.time
+        && after.diff(before).affectedKeys().hasOnly([
+          'tasksCompleted',
+          'lastEvidenceId',
+          'updatedAt'
+        ]);
+    }
+
+    function hasMatchingAreaStatsIncrementForEvidence(
+      userId,
+      evidenceId,
+      data
+    ) {
+      let statsPath = achievementAreaStatsPath(userId, data.areaId);
+      let before = get(statsPath).data;
+      let after = getAfter(statsPath).data;
+      return exists(statsPath)
+        && existsAfter(statsPath)
+        && before.areaId == data.areaId
+        && after.areaId == data.areaId
+        && after.tasksCompleted == before.tasksCompleted + 1
+        && after.lastEvidenceId == evidenceId
+        && after.updatedAt == request.time;
+    }
+
+    function hasValidAchievementAreaEvidenceCreate(userId, evidenceId) {
+      let data = request.resource.data;
+      let sourcePath = xpTransactionPath(userId, data.sourceId);
+      let source = get(sourcePath).data;
+      return data.keys().hasOnly([
+          'areaId',
+          'metric',
+          'sourceType',
+          'sourceId',
+          'occurredAt',
+          'recordedAt'
+        ])
+        && data.keys().hasAll([
+          'areaId',
+          'metric',
+          'sourceType',
+          'sourceId',
+          'occurredAt',
+          'recordedAt'
+        ])
+        && isValidArea(data.areaId)
+        && data.metric == 'areaTasksCompleted'
+        && data.sourceType == 'TASK_COMPLETED'
+        && data.sourceId is string
+        && data.sourceId.size() > 0
+        && data.sourceId.size() <= 128
+        && !data.sourceId.matches('.*[/].*')
+        && evidenceId == 'area_task_completed__' + data.sourceId
+        && data.occurredAt is timestamp
+        && data.recordedAt == request.time
+        && exists(sourcePath)
+        && source.eventType == 'TASK_COMPLETED'
+        && source.taskId == data.sourceId
+        && source.keys().hasAny(['areaId'])
+        && isValidArea(source.areaId)
+        && source.areaId == data.areaId
+        && source.createdAt == data.occurredAt
+        && hasMatchingAreaStatsIncrementForEvidence(
+          userId,
+          evidenceId,
+          data
+        );
+    }
+
+    function hasMatchingAreaUnlockEvidence(
+      userId,
+      achievementId,
+      evidenceId
+    ) {
+      let areaId = achievementArea(achievementId);
+      let evidencePath = achievementAreaEvidencePath(userId, evidenceId);
+      let evidence = get(evidencePath).data;
+      return exists(evidencePath)
+        && evidence.areaId == areaId
+        && evidence.metric == 'areaTasksCompleted'
+        && evidence.sourceType == 'TASK_COMPLETED';
+    }
+
     function hasValidAchievementUnlockCreate(userId, achievementId) {
       let data = request.resource.data;
-      let statsPath = achievementStatsPath(userId);
+      let areaAchievement = isAreaAchievement(achievementId);
+      let areaId = achievementArea(achievementId);
+      let statsPath = areaAchievement
+        ? achievementAreaStatsPath(userId, areaId)
+        : achievementStatsPath(userId);
       let stats = get(statsPath).data;
       let transactionPath = xpTransactionPath(
         userId,
@@ -1761,7 +2083,14 @@ service cloud.firestore {
         && data.awardedXp == xpTransaction.amount
         && data.triggerEvidenceId == stats.lastEvidenceId
         && data.triggerEvidenceId is string
-        && data.definitionVersion == 1
+        && data.definitionVersion
+          == achievementDefinitionVersion(achievementId)
+        && (!areaAchievement
+          || hasMatchingAreaUnlockEvidence(
+            userId,
+            achievementId,
+            data.triggerEvidenceId
+          ))
         && exists(statsPath)
         && !exists(transactionPath)
         && existsAfter(transactionPath)
@@ -1942,6 +2271,27 @@ service cloud.firestore {
         allow update, delete: if false;
       }
 
+      match /achievementAreaStats/{areaId} {
+        allow get, list: if isOwner(userId);
+
+        allow create: if isOwner(userId)
+          && hasValidAchievementAreaStatsCreate(areaId);
+
+        allow update: if isOwner(userId)
+          && hasValidAchievementAreaStatsUpdate(userId, areaId);
+
+        allow delete: if false;
+      }
+
+      match /achievementAreaEvidence/{evidenceId} {
+        allow get, list: if isOwner(userId);
+
+        allow create: if isOwner(userId)
+          && hasValidAchievementAreaEvidenceCreate(userId, evidenceId);
+
+        allow update, delete: if false;
+      }
+
       match /achievements/{achievementId} {
         allow get, list: if isOwner(userId);
 
@@ -2004,11 +2354,11 @@ service cloud.firestore {
         allow update, delete: if false;
       }
 
-      match /goalCompletions/{progressId} {
+      match /goalCompletions/{completionId} {
         allow get, list: if isOwner(userId);
 
         allow create: if isOwner(userId)
-          && hasValidGoalCompletionCreate(userId, progressId);
+          && hasValidGoalCompletionCreate(userId, completionId);
 
         allow update, delete: if false;
       }
@@ -2049,6 +2399,7 @@ service cloud.firestore {
 
         allow create: if isOwner(userId)
           && hasValidTaskShape()
+          && hasValidTaskAreaForCreate(userId)
           && hasValidTaskProjectForCreate(userId)
           && request.resource.data.createdAt == request.time
           && request.resource.data.updatedAt == request.time
@@ -2063,6 +2414,7 @@ service cloud.firestore {
           && request.resource.data.createdAt == resource.data.createdAt
           && request.resource.data.updatedAt == request.time
           && hasValidTaskCompletionTransition()
+          && hasUnchangedTaskArea()
           && (!(resource.data.status != 'completed'
               && request.resource.data.status == 'completed')
             || hasXpTransactionAfter(userId, taskId))
@@ -2070,6 +2422,7 @@ service cloud.firestore {
             'title',
             'description',
             'category',
+            'areaId',
             'priority',
             'status',
             'project',

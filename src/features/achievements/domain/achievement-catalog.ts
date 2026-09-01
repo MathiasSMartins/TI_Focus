@@ -1,4 +1,6 @@
+import { IT_AREA_CONFIG, IT_AREA_IDS } from "@/config/it-area-config"
 import type {
+  AchievementAreaStatsDocument,
   AchievementCategory,
   AchievementDefinition,
   AchievementId,
@@ -7,9 +9,12 @@ import type {
   AchievementStatsDocument,
 } from "@/features/achievements/types/achievement"
 
-export const ACHIEVEMENT_DEFINITION_VERSION = 1 as const
+export const GENERAL_ACHIEVEMENT_DEFINITION_VERSION = 1 as const
+export const AREA_ACHIEVEMENT_DEFINITION_VERSION = 2 as const
+export const ACHIEVEMENT_DEFINITION_VERSION =
+  GENERAL_ACHIEVEMENT_DEFINITION_VERSION
 
-export const ACHIEVEMENT_CATALOG = [
+const GENERAL_ACHIEVEMENT_DEFINITIONS = [
   {
     id: "first-mission",
     name: "Primeira Missão",
@@ -282,7 +287,48 @@ export const ACHIEVEMENT_CATALOG = [
     rarity: "epic",
     sourceAvailable: true,
   },
-] as const satisfies readonly AchievementDefinition[]
+] as const satisfies readonly Omit<AchievementDefinition, "definitionVersion">[]
+
+export const GENERAL_ACHIEVEMENT_CATALOG = GENERAL_ACHIEVEMENT_DEFINITIONS.map(
+  (achievement) => ({
+    ...achievement,
+    definitionVersion: GENERAL_ACHIEVEMENT_DEFINITION_VERSION,
+  }),
+) satisfies readonly AchievementDefinition[]
+
+export const AREA_ACHIEVEMENT_CATALOG = IT_AREA_IDS.map((areaId) => {
+  const area = IT_AREA_CONFIG[areaId]
+  return {
+    id: area.achievement.id,
+    name: area.achievement.name,
+    description: area.achievement.description,
+    icon: area.icon,
+    category: "tasks",
+    xp: area.achievement.rewardXp,
+    condition: {
+      metric: area.achievement.metric,
+      target: area.achievement.target,
+      label: `${area.achievement.target} tarefas concluídas em ${area.name}`,
+    },
+    area: areaId,
+    rarity: "rare",
+    sourceAvailable: true,
+    definitionVersion: AREA_ACHIEVEMENT_DEFINITION_VERSION,
+  } as const
+}) satisfies readonly AchievementDefinition[]
+
+export const ACHIEVEMENT_CATALOG = [
+  ...GENERAL_ACHIEVEMENT_CATALOG,
+  ...AREA_ACHIEVEMENT_CATALOG,
+] satisfies readonly AchievementDefinition[]
+
+export const ACHIEVEMENT_IDS = ACHIEVEMENT_CATALOG.map(
+  (achievement) => achievement.id,
+)
+
+export const AREA_ACHIEVEMENT_IDS = AREA_ACHIEVEMENT_CATALOG.map(
+  (achievement) => achievement.id,
+)
 
 export const ACHIEVEMENT_CATEGORY_LABELS: Record<AchievementCategory, string> =
   {
@@ -313,22 +359,33 @@ export function getAchievementDefinition(id: AchievementId) {
   return ACHIEVEMENT_CATALOG.find((achievement) => achievement.id === id)
 }
 
-export function getAchievementsForMetric(metric: AchievementMetric) {
+export function getAchievementsForMetric(
+  metric: AchievementMetric,
+  area?: AchievementDefinition["area"],
+) {
   return ACHIEVEMENT_CATALOG.filter(
-    (achievement) => achievement.condition.metric === metric,
+    (achievement) =>
+      achievement.condition.metric === metric &&
+      (area === undefined || achievement.area === area),
   )
 }
 
 export function getAchievementProgressValue(
-  stats: Pick<
-    AchievementStatsDocument,
-    | "tasksCompleted"
-    | "pomodorosCompleted"
-    | "bestStreak"
-    | "perfectWeeks"
-    | "projectsCompleted"
-  >,
+  stats:
+    | Pick<
+        AchievementStatsDocument,
+        | "tasksCompleted"
+        | "pomodorosCompleted"
+        | "bestStreak"
+        | "perfectWeeks"
+        | "projectsCompleted"
+      >
+    | Pick<AchievementAreaStatsDocument, "areaId" | "tasksCompleted">,
   metric: AchievementMetric,
 ) {
+  if (metric === "areaTasksCompleted") {
+    return "areaId" in stats ? stats.tasksCompleted : 0
+  }
+  if ("areaId" in stats) return 0
   return stats[metric]
 }

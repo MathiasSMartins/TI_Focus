@@ -16,9 +16,9 @@ import {
   type WithFieldValue,
 } from "firebase/firestore"
 
+import { isITAreaId, type ITAreaId } from "@/config/it-area-config"
 import {
   ACHIEVEMENT_CATALOG,
-  ACHIEVEMENT_DEFINITION_VERSION,
   EMPTY_ACHIEVEMENT_STATS,
   getAchievementDefinition,
   getAchievementProgressValue,
@@ -26,6 +26,8 @@ import {
 } from "@/features/achievements/domain/achievement-catalog"
 import { publishAchievementUnlocked } from "@/features/achievements/events/achievement-events"
 import type {
+  AchievementAreaEvidenceDocument,
+  AchievementAreaStatsDocument,
   AchievementDefinition,
   AchievementEvidenceDocument,
   AchievementEvidenceSource,
@@ -56,7 +58,7 @@ import { firestoreDb } from "@/services/firebase"
 
 interface MetricEvidenceInput {
   evidenceId: string
-  metric: AchievementMetric
+  metric: Exclude<AchievementMetric, "areaTasksCompleted">
   sourceType: AchievementEvidenceSource
   sourceId: string
   occurredAt: Timestamp
@@ -69,7 +71,10 @@ interface UnlockResult {
   award: XpAwardResult
 }
 
-const reconciliationByUser = new Map<string, Promise<void>>()
+import { createReconciliationRunner } from "@/utils/reconciliation-runner"
+
+const RECONCILIATION_TTL_MS = 30_000
+const runReconciliation = createReconciliationRunner(RECONCILIATION_TTL_MS)
 const publishedFeedbackTransactions = new Set<string>()
 
 function getFirestoreInstance(): Firestore {
@@ -97,6 +102,16 @@ function getStatsReference(uid: string) {
   ) as DocumentReference<AchievementStatsDocument>
 }
 
+function getAreaStatsReference(uid: string, areaId: ITAreaId) {
+  return doc(
+    getFirestoreInstance(),
+    "users",
+    uid,
+    "achievementAreaStats",
+    areaId,
+  ) as DocumentReference<AchievementAreaStatsDocument>
+}
+
 function getEvidenceReference(uid: string, evidenceId: string) {
   return doc(
     getFirestoreInstance(),
@@ -105,6 +120,16 @@ function getEvidenceReference(uid: string, evidenceId: string) {
     "achievementEvidence",
     evidenceId,
   ) as DocumentReference<AchievementEvidenceDocument>
+}
+
+function getAreaEvidenceReference(uid: string, evidenceId: string) {
+  return doc(
+    getFirestoreInstance(),
+    "users",
+    uid,
+    "achievementAreaEvidence",
+    evidenceId,
+  ) as DocumentReference<AchievementAreaEvidenceDocument>
 }
 
 function getUnlockReference(uid: string, achievementId: AchievementId) {
@@ -182,6 +207,23 @@ export async function ensureAchievementStats(uid: string) {
   })
 }
 
+export async function ensureAchievementAreaStats(
+  uid: string,
+  areaId: ITAreaId,
+) {
+  const reference = getAreaStatsReference(uid, areaId)
+  await runTransaction(getFirestoreInstance(), async (transaction) => {
+    const snapshot = await transaction.get(reference)
+    if (snapshot.exists()) return
+    transaction.set(reference, {
+      areaId,
+      tasksCompleted: 0,
+      lastEvidenceId: null,
+      updatedAt: serverTimestamp(),
+    } as WithFieldValue<AchievementAreaStatsDocument>)
+  })
+}
+
 async function unlockAchievement(
   uid: string,
   achievement: AchievementDefinition,
@@ -190,7 +232,13 @@ async function unlockAchievement(
     runTransaction<UnlockResult | null>(
       getFirestoreInstance(),
       async (transaction) => {
-        const statsReference = getStatsReference(uid)
+        const statsReference = (
+          achievement.area === "general"
+            ? getStatsReference(uid)
+            : getAreaStatsReference(uid, achievement.area)
+        ) as DocumentReference<
+          AchievementStatsDocument | AchievementAreaStatsDocument
+        >
         const unlockReference = getUnlockReference(uid, achievement.id)
         const profileReference = getProfileReference(uid)
         const xpReference = getAchievementXpReference(uid, achievement.id)
@@ -205,8 +253,9 @@ async function unlockAchievement(
         if (unlockSnapshot.exists() || xpSnapshot.exists()) return null
         if (!statsSnapshot.exists() || !profileSnapshot.exists()) return null
 
+        const stats = statsSnapshot.data()
         const progress = getAchievementProgressValue(
-          statsSnapshot.data(),
+          stats,
           achievement.condition.metric,
         )
         if (
@@ -233,7 +282,7 @@ async function unlockAchievement(
         const levelBefore = getLevelForXp(xpBefore)
         const levelAfter = getLevelForXp(xpAfter)
         const transactionId = `achievement__${achievement.id}`
-        const triggerEvidenceId = statsSnapshot.data().lastEvidenceId
+        const triggerEvidenceId = stats.lastEvidenceId
         if (!triggerEvidenceId) return null
 
         transaction.set(unlockReference, {
@@ -243,7 +292,7 @@ async function unlockAchievement(
           rewardXp: achievement.xp,
           awardedXp: amount,
           triggerEvidenceId,
-          definitionVersion: ACHIEVEMENT_DEFINITION_VERSION,
+          definitionVersion: achievement.definitionVersion,
         })
         transaction.set(xpReference, {
           userId: uid,
@@ -316,8 +365,9 @@ async function unlockEligibleAchievements(
   uid: string,
   metric: AchievementMetric,
   showFeedback: boolean,
+  area?: AchievementDefinition["area"],
 ) {
-  for (const achievement of getAchievementsForMetric(metric)) {
+  for (const achievement of getAchievementsForMetric(metric, area)) {
     const result = await unlockAchievement(uid, achievement)
     if (result && showFeedback) publishUnlockFeedback(uid, result)
   }
@@ -411,11 +461,66 @@ async function recordMetricEvidence(
   }
 }
 
+async function recordAreaTaskEvidence(
+  uid: string,
+  areaId: ITAreaId,
+  taskId: string,
+  occurredAt: Timestamp,
+  showFeedback: boolean,
+) {
+  const evidenceId = `area_task_completed__${taskId}`
+  const statsReference = getAreaStatsReference(uid, areaId)
+  const evidenceReference = getAreaEvidenceReference(uid, evidenceId)
+
+  const recorded = await runTransaction(
+    getFirestoreInstance(),
+    async (transaction) => {
+      const [statsSnapshot, evidenceSnapshot] = await Promise.all([
+        transaction.get(statsReference),
+        transaction.get(evidenceReference),
+      ])
+      if (evidenceSnapshot.exists()) return false
+      if (!statsSnapshot.exists()) {
+        throw new Error("Progresso de conquistas da área não inicializado.")
+      }
+
+      const stats = statsSnapshot.data()
+      transaction.set(evidenceReference, {
+        areaId,
+        metric: "areaTasksCompleted",
+        sourceType: "TASK_COMPLETED",
+        sourceId: taskId,
+        occurredAt,
+        recordedAt: serverTimestamp(),
+      })
+      transaction.update(statsReference, {
+        tasksCompleted: stats.tasksCompleted + 1,
+        lastEvidenceId: evidenceId,
+        updatedAt: serverTimestamp(),
+      })
+      return true
+    },
+  )
+
+  if (recorded || showFeedback) {
+    await unlockEligibleAchievements(
+      uid,
+      "areaTasksCompleted",
+      showFeedback,
+      areaId,
+    )
+  }
+  if (showFeedback) {
+    await publishFeedbackForEvidence(uid, evidenceId)
+  }
+}
+
 export async function processTaskCompletionForAchievements(
   uid: string,
   taskId: string,
   occurredAt: Timestamp,
   showFeedback = true,
+  areaId?: ITAreaId | null,
 ) {
   await ensureAchievementStats(uid)
   await recordMetricEvidence(
@@ -429,6 +534,10 @@ export async function processTaskCompletionForAchievements(
     },
     showFeedback,
   )
+
+  if (!isITAreaId(areaId)) return
+  await ensureAchievementAreaStats(uid, areaId)
+  await recordAreaTaskEvidence(uid, areaId, taskId, occurredAt, showFeedback)
 }
 
 export async function processPersistedTaskCompletionForAchievements(
@@ -445,6 +554,7 @@ export async function processPersistedTaskCompletionForAchievements(
     taskId,
     snapshot.data().createdAt,
     showFeedback,
+    snapshot.data().areaId,
   )
 }
 
@@ -628,6 +738,7 @@ async function reconcileUserAchievements(uid: string) {
       completion.taskId,
       completion.createdAt,
       false,
+      completion.areaId,
     )
   }
 
@@ -688,14 +799,8 @@ async function reconcileUserAchievements(uid: string) {
   }
 }
 
-export function reconcileAchievements(uid: string) {
-  const current = reconciliationByUser.get(uid)
-  if (current) return current
-  const reconciliation = reconcileUserAchievements(uid).finally(() => {
-    reconciliationByUser.delete(uid)
-  })
-  reconciliationByUser.set(uid, reconciliation)
-  return reconciliation
+export function reconcileAchievements(uid: string, force = false) {
+  return runReconciliation(uid, () => reconcileUserAchievements(uid), force)
 }
 
 export function subscribeToAchievementStats(
@@ -705,6 +810,19 @@ export function subscribeToAchievementStats(
 ): Unsubscribe {
   return onSnapshot(
     getStatsReference(uid),
+    (snapshot) => onValue(snapshot.exists() ? snapshot.data() : null),
+    onError,
+  )
+}
+
+export function subscribeToAchievementAreaStats(
+  uid: string,
+  areaId: ITAreaId,
+  onValue: (stats: AchievementAreaStatsDocument | null) => void,
+  onError: (error: Error) => void,
+): Unsubscribe {
+  return onSnapshot(
+    getAreaStatsReference(uid, areaId),
     (snapshot) => onValue(snapshot.exists() ? snapshot.data() : null),
     onError,
   )

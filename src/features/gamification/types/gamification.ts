@@ -1,5 +1,7 @@
 import type { Timestamp } from "firebase/firestore"
 
+import type { ITAreaId } from "@/config/it-area-config"
+
 import type { AchievementId } from "@/features/achievements/types/achievement"
 
 export const XP_EVENT_TYPES = [
@@ -25,6 +27,7 @@ export interface TaskXpTransactionDocument extends XpTransactionBase {
   eventType: "TASK_COMPLETED"
   taskId: string
   taskTitle: string
+  areaId?: ITAreaId | null
 }
 
 export interface AchievementXpTransactionDocument extends XpTransactionBase {

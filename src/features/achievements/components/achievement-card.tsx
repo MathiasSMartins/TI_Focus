@@ -17,16 +17,18 @@ import {
   type LucideIcon,
 } from "lucide-react"
 
+import { AreaIcon } from "@/components/area-icon"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent } from "@/components/ui/card"
+import { getAreaLabel } from "@/config/it-area-config"
 import { AchievementProgress } from "@/features/achievements/components/achievement-progress"
 import {
   ACHIEVEMENT_CATEGORY_LABELS,
   ACHIEVEMENT_RARITY_LABELS,
 } from "@/features/achievements/domain/achievement-catalog"
 import type {
-  AchievementIconName,
   AchievementRarity,
+  GeneralAchievementIconName,
   ResolvedAchievement,
 } from "@/features/achievements/types/achievement"
 
@@ -34,7 +36,7 @@ interface AchievementCardProps {
   achievement: ResolvedAchievement
 }
 
-const ICONS: Record<AchievementIconName, LucideIcon> = {
+const ICONS: Record<GeneralAchievementIconName, LucideIcon> = {
   flag: Flag,
   "list-checks": ListChecks,
   medal: Medal,
@@ -81,7 +83,10 @@ function formatUnlockDate(achievement: ResolvedAchievement) {
 }
 
 export function AchievementCard({ achievement }: AchievementCardProps) {
-  const Icon = ICONS[achievement.icon]
+  const Icon =
+    achievement.area === "general"
+      ? ICONS[achievement.icon as GeneralAchievementIconName]
+      : null
   const isUnlocked = achievement.status === "unlocked"
   const isUnavailable = achievement.status === "unavailable"
   const unlockDate = formatUnlockDate(achievement)
@@ -104,7 +109,11 @@ export function AchievementCard({ achievement }: AchievementCardProps) {
           <span
             className={`flex size-12 shrink-0 items-center justify-center rounded-2xl border ${RARITY_STYLES[achievement.rarity]}`}
           >
-            <Icon className="size-6" aria-hidden="true" />
+            {Icon ? (
+              <Icon className="size-6" aria-hidden="true" />
+            ) : (
+              <AreaIcon icon={achievement.icon} className="size-6" />
+            )}
           </span>
           <div className="flex flex-wrap justify-end gap-2">
             <Badge
@@ -127,6 +136,8 @@ export function AchievementCard({ achievement }: AchievementCardProps) {
         <div className="mt-5 flex-1">
           <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
             {ACHIEVEMENT_CATEGORY_LABELS[achievement.category]}
+            {achievement.area !== "general" &&
+              ` · ${getAreaLabel(achievement.area)}`}
           </p>
           <h3 className="mt-1 text-lg font-semibold text-foreground">
             {achievement.name}

@@ -1,21 +1,9 @@
 import type { Timestamp } from "firebase/firestore"
 
-export const IT_AREAS = [
-  { id: "information-security", label: "Segurança da Informação" },
-  { id: "software-development", label: "Desenvolvimento de Software" },
-  { id: "infrastructure", label: "Infraestrutura" },
-  { id: "support", label: "Suporte / Help Desk" },
-  { id: "devops-sre", label: "DevOps / SRE" },
-  { id: "data-analytics", label: "Dados / Data Analytics" },
-  { id: "cloud", label: "Cloud" },
-  { id: "qa-testing", label: "QA / Testes" },
-  { id: "it-project-management", label: "Gestão de Projetos de TI" },
-  { id: "networks", label: "Redes" },
-  { id: "database", label: "Banco de Dados" },
-  { id: "other", label: "Outra" },
-] as const
+import type { ITAreaId } from "@/config/it-area-config"
 
-export type ITAreaId = (typeof IT_AREAS)[number]["id"]
+export { IT_AREAS, getAreaLabel } from "@/config/it-area-config"
+export type { ITAreaId } from "@/config/it-area-config"
 
 export const PRIMARY_OBJECTIVES = [
   { id: "organize-work", label: "Organizar meu trabalho" },
@@ -77,10 +65,6 @@ export const DEFAULT_USER_SETTINGS: UserSettings = {
     inApp: true,
     push: false,
   },
-}
-
-export function getAreaLabel(areaId: ITAreaId | null) {
-  return IT_AREAS.find((area) => area.id === areaId)?.label ?? "A definir"
 }
 
 export function getPrimaryObjectiveLabel(

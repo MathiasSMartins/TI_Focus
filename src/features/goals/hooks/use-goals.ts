@@ -8,6 +8,7 @@ import {
   getCivilPeriod,
   differenceInCivilDays,
 } from "@/features/goals/domain/civil-period"
+import { selectCurrentGoalProgress } from "@/features/goals/domain/goal-progress-scope"
 import {
   deactivateGoal,
   saveGoal,
@@ -101,14 +102,17 @@ export function useGoals(uid: string | undefined, timezone: string) {
     const result = new Map<GoalCadence, GoalProgressDocument>()
     if (!current || synchronizedNow === null) return result
     for (const cadence of ["daily", "weekly", "monthly"] as const) {
-      const key = getCivilPeriod(
+      const period = getCivilPeriod(
         new Date(synchronizedNow),
         timezone,
         cadence,
-      ).key
-      const item = current.progress.find(
-        (progress) =>
-          progress.cadence === cadence && progress.periodKey === key,
+      )
+      const item = selectCurrentGoalProgress(
+        current.progress,
+        cadence,
+        period,
+        timezone,
+        synchronizedNow,
       )
       if (item) result.set(cadence, item)
     }

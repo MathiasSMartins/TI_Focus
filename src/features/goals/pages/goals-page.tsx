@@ -2,6 +2,7 @@ import { Check, Gauge, LoaderCircle, Target } from "lucide-react"
 import { useState } from "react"
 
 import { Badge } from "@/components/ui/badge"
+import { getITAreaConfig } from "@/config/it-area-config"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -35,6 +36,7 @@ const defaultDrafts: Record<GoalCadence, GoalDraft> = {
 
 export function GoalsPage() {
   const { user, profile } = useAuth()
+  const areaConfig = getITAreaConfig(profile?.primaryArea)
   const timezone = profile?.settings?.timezone ?? "UTC"
   const goals = useGoals(user?.uid, timezone)
   const [drafts, setDrafts] = useState<Partial<Record<GoalCadence, GoalDraft>>>(
@@ -44,11 +46,14 @@ export function GoalsPage() {
 
   const getDraft = (cadence: GoalCadence) => {
     const goal = goals.goals.find((item) => item.cadence === cadence)
+    const suggestion = areaConfig.goals.find((item) => item.cadence === cadence)
     return (
       drafts[cadence] ??
       (goal
         ? { metric: goal.metric, target: String(goal.target) }
-        : defaultDrafts[cadence])
+        : suggestion
+          ? { metric: suggestion.metric, target: String(suggestion.target) }
+          : defaultDrafts[cadence])
     )
   }
 
@@ -73,10 +78,14 @@ export function GoalsPage() {
     <div className="space-y-6">
       <div>
         <Badge variant="outline">Períodos civis · {timezone}</Badge>
-        <h2 className="mt-3 text-3xl font-bold tracking-tight">Metas</h2>
+        <h2 className="mt-3 text-3xl font-bold tracking-tight">
+          {areaConfig.titles.goals}
+        </h2>
         <p className="mt-2 max-w-3xl text-muted-foreground">
-          Defina um alvo por cadência. O snapshot de cada período é congelado,
-          então edições não alteram progresso já iniciado.
+          Defina um alvo por cadência. As sugestões usam sua área principal como
+          contexto, mas as métricas e o progresso consideram sua atividade
+          global no app. O snapshot de cada período é congelado, então edições
+          não alteram progresso já iniciado.
         </p>
       </div>
 
@@ -85,6 +94,9 @@ export function GoalsPage() {
           const goal = goals.goals.find((item) => item.cadence === cadence)
           const draft = getDraft(cadence)
           const progress = goals.currentProgress.get(cadence)
+          const suggestion = areaConfig.goals.find(
+            (item) => item.cadence === cadence,
+          )
           const percentage = progress
             ? Math.min(
                 100,
@@ -107,6 +119,19 @@ export function GoalsPage() {
                 </div>
               </CardHeader>
               <CardContent className="space-y-4">
+                {!goal && suggestion && (
+                  <div className="rounded-lg border border-primary/20 bg-primary/5 p-3">
+                    <p className="text-xs font-medium uppercase tracking-wide text-primary">
+                      Sugestão contextual para {areaConfig.name}
+                    </p>
+                    <p className="mt-1 text-sm font-medium">
+                      {suggestion.label}
+                    </p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {suggestion.description}
+                    </p>
+                  </div>
+                )}
                 <div className="space-y-2">
                   <Label htmlFor={`${cadence}-metric`}>Métrica</Label>
                   <select
@@ -153,6 +178,9 @@ export function GoalsPage() {
 
                 {progress && (
                   <div className="rounded-lg border border-border bg-background/40 p-3">
+                    <p className="mb-2 text-xs font-medium text-muted-foreground">
+                      Progresso global do período
+                    </p>
                     <div className="flex justify-between text-sm">
                       <span>
                         {progress.current} / {progress.target}

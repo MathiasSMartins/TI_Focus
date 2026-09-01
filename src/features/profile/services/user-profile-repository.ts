@@ -12,9 +12,9 @@ import {
   type WithFieldValue,
 } from "firebase/firestore"
 
+import { isITAreaId, type ITAreaId } from "@/config/it-area-config"
 import {
   DEFAULT_USER_SETTINGS,
-  type ITAreaId,
   type PrimaryObjectiveId,
   type UserProfile,
 } from "@/features/profile/types/user-profile"
@@ -147,6 +147,32 @@ interface CompleteOnboardingInput {
   primaryObjective: PrimaryObjectiveId
   timezone: string
   currentSettings: UserProfile["settings"]
+}
+
+export async function updateUserAreas(
+  uid: string,
+  primaryArea: ITAreaId,
+  secondaryAreas: ITAreaId[],
+) {
+  if (!isITAreaId(primaryArea)) {
+    throw new Error("Selecione uma área principal válida.")
+  }
+  if (
+    secondaryAreas.length > 5 ||
+    secondaryAreas.some((area) => !isITAreaId(area)) ||
+    new Set(secondaryAreas).size !== secondaryAreas.length ||
+    secondaryAreas.includes(primaryArea)
+  ) {
+    throw new Error(
+      "Selecione até 5 áreas secundárias válidas, únicas e diferentes da principal.",
+    )
+  }
+
+  await updateDoc(getProfileReference(uid), {
+    primaryArea,
+    secondaryAreas,
+    updatedAt: serverTimestamp(),
+  })
 }
 
 export async function completeUserOnboarding({

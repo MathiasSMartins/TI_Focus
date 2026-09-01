@@ -11,6 +11,7 @@ import { useMemo, useState } from "react"
 
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent } from "@/components/ui/card"
+import { getITAreaConfig } from "@/config/it-area-config"
 import { AchievementCard } from "@/features/achievements/components/achievement-card"
 import { AchievementProgress } from "@/features/achievements/components/achievement-progress"
 import {
@@ -73,7 +74,12 @@ function AchievementGrid({
 
 export function AchievementsPage() {
   const { user, profile } = useAuth()
-  const achievementState = useAchievements(user?.uid, profile?.streak ?? 0)
+  const areaConfig = getITAreaConfig(profile?.primaryArea)
+  const achievementState = useAchievements(
+    user?.uid,
+    profile?.streak ?? 0,
+    profile?.primaryArea ?? null,
+  )
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all")
   const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>("all")
   const [rarityFilter, setRarityFilter] = useState<RarityFilter>("all")
@@ -123,11 +129,11 @@ export function AchievementsPage() {
             Sua jornada
           </span>
           <h2 className="mt-5 text-3xl font-bold tracking-tight sm:text-4xl">
-            Conquistas
+            {areaConfig.titles.achievements}
           </h2>
           <p className="mt-3 text-sm leading-6 text-slate-300 sm:text-base">
-            Acompanhe marcos de produtividade, desbloqueie medalhas e transforme
-            sua evolução em XP.
+            {areaConfig.description} Acompanhe marcos gerais e operacionais,
+            desbloqueie medalhas e transforme sua evolução em XP.
           </p>
         </div>
       </section>

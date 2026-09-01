@@ -20,6 +20,9 @@ import type { GoalCompletedEvent } from "@/features/goals/types/goal"
 import { subscribeToPomodoroCompleted } from "@/features/pomodoro/events/pomodoro-events"
 import { subscribeToTaskCompleted } from "@/features/tasks/events/task-events"
 
+const CLOCK_RETRY_INITIAL_MS = 1_000
+const CLOCK_RETRY_MAX_MS = 30_000
+
 export function GoalsProvider({ children }: { children: ReactNode }) {
   const { user, profile } = useAuth()
   const uid = user?.uid
@@ -41,43 +44,32 @@ export function GoalsProvider({ children }: { children: ReactNode }) {
     if (!uid || profile?.uid !== uid) return
     let active = true
     let rolloverTimeout: number | undefined
+    let clockRetryTimeout: number | undefined
+    let clockRetryDelayMs = CLOCK_RETRY_INITIAL_MS
+    let initialReconciliationComplete = false
     const processed = new Set<string>()
     const queued = new Set<string>()
-    let pipeline: Promise<void> = migrateLegacyDailyGoal(
-      uid,
-      profile.dailyTaskGoal,
-      timezone,
-    )
-      .then(() => reconcileGoals(uid, timezone))
-      .then(() => synchronizeServerClock(uid))
-      .then(() => undefined)
-      .catch(() => undefined)
+    let pipeline = Promise.resolve()
 
-    const enqueue = (key: string, operation: () => Promise<void>) => {
-      if (!active || processed.has(key) || queued.has(key)) return
-      queued.add(key)
-      pipeline = pipeline
-        .then(async () => {
-          if (!active) return
-          try {
-            await operation()
-            processed.add(key)
-          } catch {
-            try {
-              await reconcileGoals(uid, timezone)
-              processed.add(key)
-            } catch {
-              // A fonte permanece elegível para o próximo snapshot/retry.
-            }
-          }
-        })
-        .finally(() => queued.delete(key))
+    const scheduleClockRetry = () => {
+      if (!active || clockRetryTimeout !== undefined) return
+      const delay = clockRetryDelayMs
+      clockRetryDelayMs = Math.min(delay * 2, CLOCK_RETRY_MAX_MS)
+      clockRetryTimeout = window.setTimeout(() => {
+        clockRetryTimeout = undefined
+        if (initialReconciliationComplete) {
+          queueClockSynchronization(true)
+        } else {
+          queueInitialReconciliation()
+        }
+      }, delay)
     }
 
     const scheduleCivilRollover = () => {
+      if (!active || rolloverTimeout !== undefined) return
       const synchronizedNow = getSynchronizedServerNow(uid)
       if (synchronizedNow === null) {
-        rolloverTimeout = window.setTimeout(scheduleCivilRollover, 1_000)
+        scheduleClockRetry()
         return
       }
       const period = getCivilPeriod(
@@ -90,18 +82,95 @@ export function GoalsProvider({ children }: { children: ReactNode }) {
         period.endsAt.getTime() - synchronizedNow + 250,
       )
       rolloverTimeout = window.setTimeout(() => {
+        rolloverTimeout = undefined
         if (!active) return
         pipeline = pipeline
-          .then(() => reconcileGoals(uid, timezone))
-          .then(() => synchronizeServerClock(uid))
+          .then(async () => {
+            if (!active) return
+            try {
+              await reconcileGoals(uid, timezone, true)
+            } catch {
+              // O próximo passe idempotente continuará elegível.
+            }
+            if (active) await attemptClockSynchronization(false)
+          })
           .then(() => undefined)
           .catch(() => undefined)
-        void pipeline.then(() => {
-          if (active) scheduleCivilRollover()
-        })
       }, delay)
     }
-    scheduleCivilRollover()
+
+    const attemptClockSynchronization = async (recovering: boolean) => {
+      try {
+        await synchronizeServerClock(uid)
+      } catch {
+        scheduleClockRetry()
+        return
+      }
+      if (!active) return
+      if (recovering) {
+        try {
+          await reconcileGoals(uid, timezone, true)
+        } catch {
+          scheduleClockRetry()
+          return
+        }
+      }
+      clockRetryDelayMs = CLOCK_RETRY_INITIAL_MS
+      if (active) scheduleCivilRollover()
+    }
+
+    const attemptInitialReconciliation = async () => {
+      try {
+        await migrateLegacyDailyGoal(uid, profile.dailyTaskGoal, timezone)
+        if (!active) return
+        await reconcileGoals(uid, timezone, true)
+      } catch {
+        scheduleClockRetry()
+        return
+      }
+      if (!active) return
+      initialReconciliationComplete = true
+      await attemptClockSynchronization(false)
+    }
+
+    const queueClockSynchronization = (recovering: boolean) => {
+      pipeline = pipeline
+        .then(() =>
+          active ? attemptClockSynchronization(recovering) : undefined,
+        )
+        .then(() => undefined)
+        .catch(() => undefined)
+    }
+
+    const queueInitialReconciliation = () => {
+      pipeline = pipeline
+        .then(() => (active ? attemptInitialReconciliation() : undefined))
+        .then(() => undefined)
+        .catch(() => scheduleClockRetry())
+    }
+
+    queueInitialReconciliation()
+
+    const enqueue = (key: string, operation: () => Promise<void>) => {
+      if (!active || processed.has(key) || queued.has(key)) return
+      queued.add(key)
+      pipeline = pipeline
+        .then(async () => {
+          if (!active) return
+          try {
+            await operation()
+            processed.add(key)
+          } catch {
+            try {
+              await reconcileGoals(uid, timezone, true)
+              processed.add(key)
+            } catch {
+              // A fonte permanece elegível para o próximo snapshot/retry.
+            }
+          }
+        })
+        .finally(() => queued.delete(key))
+    }
 
     const unsubscribeGoal = subscribeToGoalCompleted((event) => {
       if (!active || event.userId !== uid) return
@@ -144,6 +213,9 @@ export function GoalsProvider({ children }: { children: ReactNode }) {
     return () => {
       active = false
       if (rolloverTimeout !== undefined) window.clearTimeout(rolloverTimeout)
+      if (clockRetryTimeout !== undefined) {
+        window.clearTimeout(clockRetryTimeout)
+      }
       unsubscribeGoal()
       unsubscribeTask()
       unsubscribePomodoro()

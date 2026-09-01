@@ -10,6 +10,7 @@ import {
 import { useMemo, useState, type FormEvent } from "react"
 import { Link, useNavigate, useParams } from "react-router-dom"
 
+import { getITAreaConfig } from "@/config/it-area-config"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
@@ -36,7 +37,8 @@ import type {
 export function ProjectDetailPage() {
   const { projectId } = useParams<{ projectId: string }>()
   const navigate = useNavigate()
-  const { user } = useAuth()
+  const { user, profile } = useAuth()
+  const areaConfig = getITAreaConfig(profile?.primaryArea)
   const projectState = useProjects(user?.uid)
   const taskState = useTasks(user?.uid)
   const [quickTitle, setQuickTitle] = useState("")
@@ -61,6 +63,7 @@ export function ProjectDetailPage() {
     if (!quickTitle.trim() || !project) return
     const success = await taskState.createTask({
       title: quickTitle,
+      ...(profile?.primaryArea ? { areaId: profile.primaryArea } : {}),
       status: "backlog",
       projectId: project.id,
       project: project.name,
@@ -75,6 +78,7 @@ export function ProjectDetailPage() {
       ? taskState.updateTask(editorTask.id, input)
       : taskState.createTask({
           ...input,
+          areaId: input.areaId ?? profile?.primaryArea ?? null,
           projectId: project.id,
           project: project.name,
         })
@@ -326,6 +330,8 @@ export function ProjectDetailPage() {
           key={editorTask?.id ?? "new-project-task"}
           task={editorTask}
           projectContext={{ id: project.id, name: project.name }}
+          areaConfig={areaConfig}
+          defaultAreaId={profile?.primaryArea ?? null}
           isSubmitting={taskState.isMutating}
           error={taskState.error}
           onClose={() => {

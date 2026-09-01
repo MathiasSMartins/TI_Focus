@@ -13,6 +13,7 @@ import {
 import { NavLink } from "react-router-dom"
 
 import { Badge } from "@/components/ui/badge"
+import { getITAreaConfig } from "@/config/it-area-config"
 import { Button } from "@/components/ui/button"
 import { useAuth } from "@/features/auth"
 import { XpProgress } from "@/features/gamification"
@@ -37,6 +38,13 @@ interface SidebarProps {
 
 export function Sidebar({ open, onClose }: SidebarProps) {
   const { profile } = useAuth()
+  const areaConfig = getITAreaConfig(profile?.primaryArea)
+  const personalizedTitles: Partial<Record<string, string>> = {
+    "/dashboard": areaConfig.titles.dashboard,
+    "/tasks": areaConfig.titles.tasks,
+    "/goals": areaConfig.titles.goals,
+    "/achievements": areaConfig.titles.achievements,
+  }
   const xp = profile?.xp ?? 0
 
   return (
@@ -70,7 +78,7 @@ export function Sidebar({ open, onClose }: SidebarProps) {
                 TI Focus
               </span>
               <span className="block text-xs text-muted-foreground">
-                Produtividade em evolução
+                {areaConfig.name}
               </span>
             </span>
           </NavLink>
@@ -91,7 +99,7 @@ export function Sidebar({ open, onClose }: SidebarProps) {
           aria-label="Navegação principal"
         >
           <p className="mb-2 px-3 text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-            Workspace
+            {areaConfig.titles.workspace}
           </p>
           {navigation.map((item) => {
             const Icon = item.icon
@@ -111,7 +119,7 @@ export function Sidebar({ open, onClose }: SidebarProps) {
                 }
               >
                 <Icon className="size-5" aria-hidden="true" />
-                {item.label}
+                {personalizedTitles[item.href] ?? item.label}
               </NavLink>
             )
           })}

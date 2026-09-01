@@ -12,7 +12,9 @@ import {
 import { useState } from "react"
 import { useNavigate } from "react-router-dom"
 
+import { AreaIcon } from "@/components/area-icon"
 import { Badge } from "@/components/ui/badge"
+import { getITAreaConfig, type ITAreaStatKey } from "@/config/it-area-config"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -38,6 +40,13 @@ interface StatItem {
   icon: LucideIcon
 }
 
+const AREA_STAT_ICONS: Record<ITAreaStatKey, LucideIcon> = {
+  areaTasksCompleted: CheckCircle2,
+  areaTasksPending: CircleDot,
+  areaTasksTotal: Target,
+  areaCompletionRate: Trophy,
+}
+
 function formatTransactionDate(date: Date) {
   return new Intl.DateTimeFormat("pt-BR", {
     day: "2-digit",
@@ -58,6 +67,7 @@ function getTransactionTitle(transaction: XpTransaction) {
 export function DashboardPage() {
   const navigate = useNavigate()
   const { user, profile } = useAuth()
+  const areaConfig = getITAreaConfig(profile?.primaryArea)
   const taskState = useTasks(user?.uid)
   const xpState = useXpTransactions(user?.uid, 8)
   const [weeklyStart] = useState(() => Date.now() - 7 * 24 * 60 * 60 * 1_000)
@@ -77,6 +87,32 @@ export function DashboardPage() {
   const pendingTasks = taskState.tasks.filter(
     (task) => task.status !== "completed" && task.status !== "archived",
   ).length
+  const areaTasks = taskState.tasks.filter(
+    (task) =>
+      profile?.primaryArea != null && task.areaId === profile.primaryArea,
+  )
+  const areaCompletedTasks = areaTasks.filter(
+    (task) => task.status === "completed",
+  ).length
+  const areaPendingTasks = areaTasks.filter(
+    (task) => task.status !== "completed" && task.status !== "archived",
+  ).length
+  const areaCompletionRate =
+    areaTasks.length === 0
+      ? 0
+      : Math.round((areaCompletedTasks / areaTasks.length) * 100)
+  const areaStatValues: Record<ITAreaStatKey, string> = {
+    areaTasksCompleted: String(areaCompletedTasks),
+    areaTasksPending: String(areaPendingTasks),
+    areaTasksTotal: String(areaTasks.length),
+    areaCompletionRate: `${areaCompletionRate}%`,
+  }
+  const areaStats: StatItem[] = areaConfig.stats.map((stat) => ({
+    label: stat.label,
+    value: areaStatValues[stat.key],
+    detail: stat.description,
+    icon: AREA_STAT_ICONS[stat.key],
+  }))
 
   const stats: StatItem[] = [
     {
@@ -121,13 +157,19 @@ export function DashboardPage() {
     <div className="space-y-6">
       <section className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <Badge variant="outline">Gamificação ativa</Badge>
+          <div className="flex items-center gap-3">
+            <span className="flex size-11 items-center justify-center rounded-xl bg-primary/10 text-primary">
+              <AreaIcon icon={areaConfig.icon} className="size-5" />
+            </span>
+            <Badge variant="outline">{areaConfig.name}</Badge>
+          </div>
           <h2 className="mt-3 text-2xl font-bold tracking-tight sm:text-3xl">
-            Continue construindo seu progresso.
+            {areaConfig.titles.dashboard}
           </h2>
           <p className="mt-2 max-w-2xl text-sm text-muted-foreground sm:text-base">
-            Conclua tarefas relevantes, acumule XP e avance pelos níveis da sua
-            jornada profissional.
+            {profile?.name
+              ? `${profile.name}, ${areaConfig.description}`
+              : areaConfig.description}
           </p>
         </div>
         <Button type="button" onClick={() => navigate("/tasks")}>
@@ -164,6 +206,45 @@ export function DashboardPage() {
             </Card>
           )
         })}
+      </section>
+
+      <section aria-labelledby="area-stats-title" className="space-y-3">
+        <div>
+          <h3 id="area-stats-title" className="text-lg font-semibold">
+            Estatísticas de {areaConfig.name}
+          </h3>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Apenas tarefas registradas nesta área; itens históricos sem área não
+            entram neste recorte.
+          </p>
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          {areaStats.map((stat) => {
+            const Icon = stat.icon
+            return (
+              <Card key={stat.label}>
+                <CardContent className="p-5">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <p className="text-sm text-muted-foreground">
+                        {stat.label}
+                      </p>
+                      <p className="mt-2 text-2xl font-bold tracking-tight">
+                        {stat.value}
+                      </p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {stat.detail}
+                      </p>
+                    </div>
+                    <span className="flex size-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                      <Icon className="size-5" aria-hidden="true" />
+                    </span>
+                  </div>
+                </CardContent>
+              </Card>
+            )
+          })}
+        </div>
       </section>
 
       <Card>

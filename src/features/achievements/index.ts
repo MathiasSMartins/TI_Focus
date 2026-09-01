@@ -3,6 +3,10 @@ export { AchievementProgress } from "@/features/achievements/components/achievem
 export { AchievementUnlockedFeedback } from "@/features/achievements/components/achievement-unlocked-feedback"
 export {
   ACHIEVEMENT_CATALOG,
+  ACHIEVEMENT_IDS,
+  AREA_ACHIEVEMENT_CATALOG,
+  AREA_ACHIEVEMENT_IDS,
+  GENERAL_ACHIEVEMENT_CATALOG,
   ACHIEVEMENT_CATEGORY_LABELS,
   ACHIEVEMENT_RARITY_LABELS,
 } from "@/features/achievements/domain/achievement-catalog"
@@ -10,11 +14,18 @@ export { useAchievements } from "@/features/achievements/hooks/use-achievements"
 export { AchievementsPage } from "@/features/achievements/pages/achievements-page"
 export { AchievementsProvider } from "@/features/achievements/providers/achievements-provider"
 export type {
+  AchievementArea,
+  AchievementAreaEvidenceDocument,
+  AchievementAreaStatsDocument,
   AchievementCategory,
   AchievementDefinition,
   AchievementId,
+  AchievementMetric,
   AchievementRarity,
   AchievementStatus,
+  AchievementUnlockDocument,
   AchievementUnlockedEvent,
+  AreaAchievementId,
+  GeneralAchievementId,
   ResolvedAchievement,
 } from "@/features/achievements/types/achievement"

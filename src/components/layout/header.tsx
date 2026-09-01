@@ -2,6 +2,7 @@ import { Bell, LoaderCircle, LogOut, Menu, Search } from "lucide-react"
 import { useLocation } from "react-router-dom"
 
 import { Button } from "@/components/ui/button"
+import { getITAreaConfig } from "@/config/it-area-config"
 import { useAuth } from "@/features/auth"
 import { UserAvatar } from "@/features/profile/components/user-avatar"
 
@@ -23,9 +24,17 @@ interface HeaderProps {
 export function Header({ onOpenNavigation }: HeaderProps) {
   const { pathname } = useLocation()
   const { user, profile, logout, isSubmitting } = useAuth()
+  const areaConfig = getITAreaConfig(profile?.primaryArea)
+  const personalizedPageTitles: Record<string, string> = {
+    ...pageTitles,
+    "/dashboard": areaConfig.titles.dashboard,
+    "/tasks": areaConfig.titles.tasks,
+    "/goals": areaConfig.titles.goals,
+    "/achievements": areaConfig.titles.achievements,
+  }
   const title = pathname.startsWith("/projects/")
     ? "Detalhes do projeto"
-    : (pageTitles[pathname] ?? "TI Focus")
+    : (personalizedPageTitles[pathname] ?? "TI Focus")
   const displayName = profile?.name ?? user?.displayName
   const avatar = profile?.avatar ?? user?.photoURL
 

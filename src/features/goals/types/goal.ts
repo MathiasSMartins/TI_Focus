@@ -77,6 +77,7 @@ export interface GoalStreakDocument {
   best: number
   productiveDays: number
   lastProcessedProgressId: string
+  lastCompletedProgressId?: string
   lastCompletedPeriodKey: string | null
   lastCompletedAt: Timestamp | null
   updatedAt: Timestamp

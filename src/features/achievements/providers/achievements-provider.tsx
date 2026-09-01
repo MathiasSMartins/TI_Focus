@@ -61,7 +61,7 @@ export function AchievementsProvider({ children }: AchievementsProviderProps) {
     })
 
     const reconcilePersistedCompletions = () =>
-      reconcileAchievements(uid).catch(() => undefined)
+      reconcileAchievements(uid, true).catch(() => undefined)
 
     const unsubscribeTask = subscribeToTaskCompleted((event) => {
       if (!active || event.userId !== uid || event.alreadyProcessed) return
@@ -110,7 +110,7 @@ export function AchievementsProvider({ children }: AchievementsProviderProps) {
               showFeedback,
             ),
           )
-          .catch(() => reconcileAchievements(uid))
+          .catch(() => reconcileAchievements(uid, true))
           .then(() => undefined)
       },
       () => undefined,

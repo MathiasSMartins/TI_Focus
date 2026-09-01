@@ -1,6 +1,10 @@
 import type { Timestamp } from "firebase/firestore"
 
-import type { ITAreaId } from "@/features/profile/types/user-profile"
+import type {
+  ITAreaAchievement,
+  ITAreaIconName,
+  ITAreaId,
+} from "@/config/it-area-config"
 
 export const ACHIEVEMENT_CATEGORIES = [
   "tasks",
@@ -25,10 +29,11 @@ export const ACHIEVEMENT_METRICS = [
   "bestStreak",
   "perfectWeeks",
   "projectsCompleted",
+  "areaTasksCompleted",
 ] as const
 export type AchievementMetric = (typeof ACHIEVEMENT_METRICS)[number]
 
-export const ACHIEVEMENT_IDS = [
+export const GENERAL_ACHIEVEMENT_IDS = [
   "first-mission",
   "tasks-10",
   "tasks-50",
@@ -47,11 +52,13 @@ export const ACHIEVEMENT_IDS = [
   "first-project",
   "projects-10",
 ] as const
-export type AchievementId = (typeof ACHIEVEMENT_IDS)[number]
+export type GeneralAchievementId = (typeof GENERAL_ACHIEVEMENT_IDS)[number]
+export type AreaAchievementId = ITAreaAchievement["id"]
+export type AchievementId = GeneralAchievementId | AreaAchievementId
 
 export type AchievementArea = "general" | ITAreaId
 export type AchievementStatus = "locked" | "unlocked" | "unavailable"
-export type AchievementIconName =
+export type GeneralAchievementIconName =
   | "flag"
   | "list-checks"
   | "medal"
@@ -64,6 +71,7 @@ export type AchievementIconName =
   | "calendar-check"
   | "folder-check"
   | "folders"
+export type AchievementIconName = GeneralAchievementIconName | ITAreaIconName
 
 export interface AchievementCondition {
   metric: AchievementMetric
@@ -82,6 +90,7 @@ export interface AchievementDefinition {
   area: AchievementArea
   rarity: AchievementRarity
   sourceAvailable: boolean
+  definitionVersion: 1 | 2
 }
 
 export interface AchievementStatsDocument {
@@ -94,6 +103,13 @@ export interface AchievementStatsDocument {
   updatedAt: Timestamp
 }
 
+export interface AchievementAreaStatsDocument {
+  areaId: ITAreaId
+  tasksCompleted: number
+  lastEvidenceId: string | null
+  updatedAt: Timestamp
+}
+
 export type AchievementEvidenceSource =
   | "TASK_COMPLETED"
   | "PROJECT_COMPLETED"
@@ -102,8 +118,17 @@ export type AchievementEvidenceSource =
   | "PERFECT_WEEK"
 
 export interface AchievementEvidenceDocument {
-  metric: AchievementMetric
+  metric: Exclude<AchievementMetric, "areaTasksCompleted">
   sourceType: AchievementEvidenceSource
+  sourceId: string
+  occurredAt: Timestamp
+  recordedAt: Timestamp
+}
+
+export interface AchievementAreaEvidenceDocument {
+  areaId: ITAreaId
+  metric: "areaTasksCompleted"
+  sourceType: "TASK_COMPLETED"
   sourceId: string
   occurredAt: Timestamp
   recordedAt: Timestamp
@@ -116,7 +141,7 @@ export interface AchievementUnlockDocument {
   rewardXp: number
   awardedXp: number
   triggerEvidenceId: string
-  definitionVersion: 1
+  definitionVersion: 1 | 2
 }
 
 export interface ResolvedAchievement extends AchievementDefinition {

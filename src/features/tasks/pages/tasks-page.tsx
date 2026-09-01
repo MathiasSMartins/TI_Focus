@@ -12,6 +12,7 @@ import {
 } from "lucide-react"
 import { useMemo, useState, type FormEvent } from "react"
 
+import { getITAreaConfig } from "@/config/it-area-config"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
@@ -52,7 +53,8 @@ function isOverdue(task: Task) {
 }
 
 export function TasksPage() {
-  const { user } = useAuth()
+  const { user, profile } = useAuth()
+  const areaConfig = getITAreaConfig(profile?.primaryArea)
   const taskState = useTasks(user?.uid)
   const projectState = useProjects(user?.uid)
   const [quickTitle, setQuickTitle] = useState("")
@@ -164,7 +166,10 @@ export function TasksPage() {
   async function handleQuickCreate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (!quickTitle.trim()) return
-    const success = await taskState.createTask({ title: quickTitle })
+    const success = await taskState.createTask({
+      title: quickTitle,
+      ...(profile?.primaryArea ? { areaId: profile.primaryArea } : {}),
+    })
     if (success) setQuickTitle("")
   }
 
@@ -223,7 +228,7 @@ export function TasksPage() {
       <section className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h2 className="text-2xl font-bold tracking-tight sm:text-3xl">
-            Tarefas
+            {areaConfig.titles.tasks}
           </h2>
           <p className="mt-2 text-sm text-muted-foreground">
             Capture rapidamente, organize prioridades e acompanhe sua execução.
@@ -521,6 +526,8 @@ export function TasksPage() {
         <TaskFormDialog
           key={editorTask?.id ?? "new-task"}
           task={editorTask}
+          areaConfig={areaConfig}
+          defaultAreaId={profile?.primaryArea ?? null}
           isSubmitting={taskState.isMutating}
           error={taskState.error}
           onClose={closeEditor}

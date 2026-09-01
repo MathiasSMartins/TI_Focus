@@ -15,6 +15,8 @@ import {
 import { useEffect, useRef, useState, type FormEvent } from "react"
 import { Navigate, useNavigate } from "react-router-dom"
 
+import { AreaIcon } from "@/components/area-icon"
+import { IT_AREA_CONFIG } from "@/config/it-area-config"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -397,24 +399,33 @@ export function OnboardingPage() {
                   <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                     {IT_AREAS.map((area) => {
                       const selected = primaryArea === area.id
+                      const areaConfig = IT_AREA_CONFIG[area.id]
                       return (
                         <button
                           key={area.id}
                           type="button"
-                          className={`flex min-h-20 items-center gap-3 rounded-xl border p-4 text-left text-sm font-medium transition ${
+                          className={`flex min-h-24 items-start gap-3 rounded-xl border p-4 text-left transition ${
                             selected
                               ? "border-primary bg-primary/10 text-primary ring-1 ring-primary"
                               : "border-border bg-background hover:border-primary/40 hover:bg-accent"
                           }`}
+                          aria-label={area.label}
                           aria-pressed={selected}
                           onClick={() => selectPrimaryArea(area.id)}
                           disabled={isSubmitting}
                         >
-                          <BriefcaseBusiness
-                            className="size-5 shrink-0"
-                            aria-hidden="true"
+                          <AreaIcon
+                            icon={areaConfig.icon}
+                            className="mt-0.5 size-5 shrink-0"
                           />
-                          <span>{area.label}</span>
+                          <span className="min-w-0">
+                            <span className="block text-sm font-medium">
+                              {area.label}
+                            </span>
+                            <span className="mt-1 block text-xs text-muted-foreground">
+                              {areaConfig.description}
+                            </span>
+                          </span>
                           {selected && (
                             <CheckCircle2
                               className="ml-auto size-4 shrink-0"
@@ -443,6 +454,7 @@ export function OnboardingPage() {
                     {IT_AREAS.filter((area) => area.id !== primaryArea).map(
                       (area) => {
                         const selected = secondaryAreas.includes(area.id)
+                        const areaConfig = IT_AREA_CONFIG[area.id]
                         const disabled =
                           isSubmitting ||
                           (!selected &&
@@ -450,20 +462,32 @@ export function OnboardingPage() {
                         return (
                           <label
                             key={area.id}
-                            className={`flex min-h-16 items-center gap-3 rounded-xl border p-4 text-sm transition ${
+                            className={`flex min-h-24 items-start gap-3 rounded-xl border p-4 text-sm transition ${
                               selected
                                 ? "border-primary bg-primary/10 text-primary"
                                 : "border-border bg-background"
                             } ${disabled ? "cursor-not-allowed opacity-50" : "cursor-pointer hover:bg-accent"}`}
                           >
                             <input
+                              aria-label={area.label}
                               type="checkbox"
-                              className="size-4 accent-[var(--primary)]"
+                              className="mt-1 size-4 accent-[var(--primary)]"
                               checked={selected}
                               onChange={() => toggleSecondaryArea(area.id)}
                               disabled={disabled}
                             />
-                            <span>{area.label}</span>
+                            <AreaIcon
+                              icon={areaConfig.icon}
+                              className="mt-0.5 size-5 shrink-0"
+                            />
+                            <span className="min-w-0">
+                              <span className="block font-medium">
+                                {area.label}
+                              </span>
+                              <span className="mt-1 block text-xs text-muted-foreground">
+                                {areaConfig.description}
+                              </span>
+                            </span>
                           </label>
                         )
                       },

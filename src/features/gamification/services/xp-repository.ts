@@ -17,6 +17,7 @@ import {
   type WithFieldValue,
 } from "firebase/firestore"
 
+import type { ITAreaId } from "@/config/it-area-config"
 import {
   XP_DAILY_LIMIT,
   XP_WINDOW_DURATION_MS,
@@ -140,6 +141,7 @@ export async function prepareTaskXpAward(
   taskId: string,
   taskTitle: string,
   priority: TaskPriority,
+  areaId: ITAreaId | null,
   serverNow: Timestamp,
 ): Promise<PreparedXpAward> {
   const profileReference = getProfileReference(uid)
@@ -219,6 +221,7 @@ export async function prepareTaskXpAward(
       eventType: "TASK_COMPLETED",
       taskId,
       taskTitle,
+      areaId,
       createdAt: serverTimestamp(),
       xpBefore,
       xpAfter,
@@ -239,6 +242,7 @@ export interface PreparedGoalXpAward {
 export async function prepareGoalXpAward(
   transaction: Transaction,
   uid: string,
+  completionId: string,
   progressId: string,
   cadence: "daily" | "weekly" | "monthly",
   reward: number,
@@ -247,7 +251,7 @@ export async function prepareGoalXpAward(
   const profileReference = getProfileReference(uid)
   const transactionReference = getXpTransactionReference(
     uid,
-    `goal__${progressId}`,
+    `goal__${completionId}`,
   )
   const [profileSnapshot, transactionSnapshot] = await Promise.all([
     transaction.get(profileReference),
@@ -260,7 +264,7 @@ export async function prepareGoalXpAward(
   if (transactionSnapshot.exists()) {
     return {
       result: {
-        transactionId: `goal__${progressId}`,
+        transactionId: `goal__${completionId}`,
         amount: 0,
         xpBefore: profile.xp,
         xpAfter: profile.xp,
@@ -287,7 +291,7 @@ export async function prepareGoalXpAward(
   const xpAfter = xpBefore + amount
   const levelBefore = getLevelForXp(xpBefore)
   const levelAfter = getLevelForXp(xpAfter)
-  const transactionId = `goal__${progressId}`
+  const transactionId = `goal__${completionId}`
 
   return {
     result: {

@@ -9,6 +9,11 @@ import {
 } from "react"
 
 import { Button } from "@/components/ui/button"
+import type {
+  ITAreaConfig,
+  ITAreaId,
+  ITAreaTaskTemplate,
+} from "@/config/it-area-config"
 import { FormMessage } from "@/components/ui/form-message"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -28,6 +33,8 @@ import {
 interface TaskFormDialogProps {
   task?: Task | null
   projectContext?: { id: string; name: string }
+  areaConfig?: ITAreaConfig
+  defaultAreaId?: ITAreaId | null
   isSubmitting: boolean
   error?: string | null
   onClose: () => void
@@ -51,6 +58,8 @@ function fromDateInputValue(value: string) {
 export function TaskFormDialog({
   task,
   projectContext,
+  areaConfig,
+  defaultAreaId,
   isSubmitting,
   error,
   onClose,
@@ -78,6 +87,31 @@ export function TaskFormDialog({
     const previousFocus = document.activeElement as HTMLElement | null
     return () => previousFocus?.focus()
   }, [])
+
+  function applyTemplate(template: ITAreaTaskTemplate) {
+    const hasSignificantDraft =
+      title.trim().length > 0 ||
+      description.trim().length > 0 ||
+      category.trim().length > 0 ||
+      tags.trim().length > 0 ||
+      estimate.trim().length > 0 ||
+      priority !== "medium"
+    if (
+      hasSignificantDraft &&
+      !window.confirm(
+        "Aplicar este template substituirá o rascunho atual. Deseja continuar?",
+      )
+    ) {
+      return
+    }
+
+    setTitle(template.title)
+    setDescription(template.description)
+    setCategory(template.category)
+    setPriority(template.priority)
+    setTags(template.tags.join(", "))
+    setEstimate(String(template.estimateMinutes))
+  }
 
   function handleDialogKeyDown(event: ReactKeyboardEvent<HTMLElement>) {
     if (event.key === "Escape" && !isSubmitting) {
@@ -145,6 +179,7 @@ export function TaskFormDialog({
       title,
       description,
       category,
+      areaId: task ? (task.areaId ?? null) : (defaultAreaId ?? null),
       priority,
       status,
       ...(projectContext
@@ -202,6 +237,34 @@ export function TaskFormDialog({
         <form className="space-y-5 p-5" onSubmit={handleSubmit}>
           {(validationError || error) && (
             <FormMessage>{validationError ?? error ?? ""}</FormMessage>
+          )}
+
+          {!task && areaConfig && areaConfig.taskTemplates.length > 0 && (
+            <div className="space-y-2 rounded-lg border border-primary/20 bg-primary/5 p-4">
+              <div>
+                <p className="text-sm font-medium">
+                  Templates de {areaConfig.name}
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Use como ponto de partida e edite qualquer campo antes de
+                  salvar.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {areaConfig.taskTemplates.map((template) => (
+                  <Button
+                    key={template.id}
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => applyTemplate(template)}
+                    disabled={isSubmitting}
+                  >
+                    {template.label}
+                  </Button>
+                ))}
+              </div>
+            </div>
           )}
 
           <div className="space-y-2">
@@ -271,12 +334,26 @@ export function TaskFormDialog({
               <Label htmlFor="task-category">Categoria</Label>
               <Input
                 id="task-category"
+                list={areaConfig ? "task-category-suggestions" : undefined}
                 value={category}
                 onChange={(event) => setCategory(event.target.value)}
                 maxLength={80}
                 placeholder="Ex.: Desenvolvimento"
                 disabled={isSubmitting}
               />
+              {areaConfig && (
+                <datalist id="task-category-suggestions">
+                  {areaConfig.categories.map((suggestion) => (
+                    <option key={suggestion} value={suggestion} />
+                  ))}
+                </datalist>
+              )}
+              {areaConfig && (
+                <p className="text-xs text-muted-foreground">
+                  Sugestões de {areaConfig.name}; categorias personalizadas
+                  continuam permitidas.
+                </p>
+              )}
             </div>
             <div className="space-y-2">
               <Label htmlFor="task-project">Projeto</Label>
