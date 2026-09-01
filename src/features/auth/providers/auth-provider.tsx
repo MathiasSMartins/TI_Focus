@@ -21,6 +21,7 @@ import type {
   AuthContextValue,
   CompleteOnboardingData,
 } from "@/features/auth/types/auth"
+import { saveGoal } from "@/features/goals/services/goal-repository"
 import {
   completeUserOnboarding,
   ensureUserProfile,
@@ -159,6 +160,13 @@ export function AuthProvider({ children }: AuthProviderProps) {
       }
 
       return runAction(async () => {
+        await saveGoal(
+          user.uid,
+          "daily",
+          "tasksCompleted",
+          data.dailyTaskGoal,
+          data.timezone,
+        )
         await completeUserOnboarding({
           uid: user.uid,
           name: data.name,
@@ -166,7 +174,6 @@ export function AuthProvider({ children }: AuthProviderProps) {
           primaryArea: data.primaryArea,
           secondaryAreas: data.secondaryAreas,
           primaryObjective: data.primaryObjective,
-          dailyTaskGoal: data.dailyTaskGoal,
           timezone: data.timezone,
           currentSettings: profile.settings,
         })

@@ -210,7 +210,6 @@ describe("Firestore user ownership rules", () => {
         primaryArea: "software-development",
         secondaryAreas: ["cloud"],
         primaryObjective: "improve-focus",
-        dailyTaskGoal: 5,
         onboardingCompleted: true,
         updatedAt: serverTimestamp(),
       }),
@@ -337,7 +336,6 @@ describe("Firestore user ownership rules", () => {
       updateDoc(reference, {
         primaryArea: "software-development",
         primaryObjective: "all",
-        dailyTaskGoal: 5,
         onboardingCompleted: true,
         updatedAt: serverTimestamp(),
       }),

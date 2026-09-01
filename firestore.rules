@@ -240,6 +240,603 @@ service cloud.firestore {
       return 'achievement__' + achievementId;
     }
 
+    function goalPath(userId, cadence) {
+      return /databases/$(database)/documents/users/$(userId)/goals/$(cadence);
+    }
+
+    function goalProgressPath(userId, progressId) {
+      return /databases/$(database)/documents/users/$(userId)/goalProgress/$(progressId);
+    }
+
+    function goalEvidencePath(userId, evidenceId) {
+      return /databases/$(database)/documents/users/$(userId)/goalEvidence/$(evidenceId);
+    }
+
+    function goalCompletionPath(userId, progressId) {
+      return /databases/$(database)/documents/users/$(userId)/goalCompletions/$(progressId);
+    }
+
+    function goalStreakPath(userId) {
+      return /databases/$(database)/documents/users/$(userId)/goalStreak/main;
+    }
+
+    function pomodoroCurrentPath(userId) {
+      return /databases/$(database)/documents/users/$(userId)/pomodoroState/current;
+    }
+
+    function pomodoroSessionPath(userId, sessionId) {
+      return /databases/$(database)/documents/users/$(userId)/pomodoroSessions/$(sessionId);
+    }
+
+    function isValidGoalCadence(cadence) {
+      return cadence == 'daily'
+        || cadence == 'weekly'
+        || cadence == 'monthly';
+    }
+
+    function isValidGoalMetric(metric) {
+      return metric == 'tasksCompleted'
+        || metric == 'xpEarned'
+        || metric == 'pomodorosCompleted'
+        || metric == 'focusedSeconds';
+    }
+
+    function goalReward(cadence) {
+      return cadence == 'daily' ? 30
+        : cadence == 'weekly' ? 100
+        : cadence == 'monthly' ? 300
+        : -1;
+    }
+
+    function expectedDailyTaskGoal(goal) {
+      return goal.active
+          && goal.metric == 'tasksCompleted'
+          && goal.target <= 50
+        ? goal.target
+        : null;
+    }
+
+    function hasSynchronizedDailyGoalProfile(userId) {
+      let goal = getAfter(goalPath(userId, 'daily')).data;
+      let profile = getAfter(profilePath(userId)).data;
+      return existsAfter(goalPath(userId, 'daily'))
+        && existsAfter(profilePath(userId))
+        && profile.dailyTaskGoal == expectedDailyTaskGoal(goal)
+        && profile.updatedAt == request.time;
+    }
+
+    function hasValidGoalShape(userId, cadence) {
+      let data = request.resource.data;
+      return data.keys().hasOnly([
+          'userId',
+          'cadence',
+          'metric',
+          'target',
+          'rewardXp',
+          'active',
+          'effectiveFromPeriodKey',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasAll([
+          'userId',
+          'cadence',
+          'metric',
+          'target',
+          'rewardXp',
+          'active',
+          'effectiveFromPeriodKey',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.userId == userId
+        && data.cadence == cadence
+        && isValidGoalCadence(data.cadence)
+        && isValidGoalMetric(data.metric)
+        && data.target is int
+        && data.target > 0
+        && data.target <= 1000000000
+        && data.rewardXp == goalReward(data.cadence)
+        && data.active is bool
+        && data.effectiveFromPeriodKey is string
+        && data.effectiveFromPeriodKey.size() > 0
+        && data.effectiveFromPeriodKey.size() <= 64
+        && !data.effectiveFromPeriodKey.matches('.*[/].*')
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function goalMatchesProgress(goal, progress) {
+      return goal.userId == progress.userId
+        && goal.cadence == progress.cadence
+        && goal.metric == progress.metric
+        && goal.target == progress.target
+        && goal.rewardXp == progress.rewardXp
+        && goal.active
+        && progress.periodKey >= goal.effectiveFromPeriodKey;
+    }
+
+    function hasMatchingGoalForProgress(userId, data) {
+      let sourcePath = goalPath(userId, data.cadence);
+      return (existsAfter(sourcePath)
+          && goalMatchesProgress(getAfter(sourcePath).data, data))
+        || (exists(sourcePath)
+          && goalMatchesProgress(get(sourcePath).data, data));
+    }
+
+    function hasValidGoalProgressShape(userId, progressId, data) {
+      return data.keys().hasOnly([
+          'userId',
+          'cadence',
+          'periodKey',
+          'timezone',
+          'periodStartsAt',
+          'periodEndsAt',
+          'eligibleFrom',
+          'metric',
+          'target',
+          'rewardXp',
+          'current',
+          'completed',
+          'completedAt',
+          'lastEvidenceId',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasAll([
+          'userId',
+          'cadence',
+          'periodKey',
+          'timezone',
+          'periodStartsAt',
+          'periodEndsAt',
+          'eligibleFrom',
+          'metric',
+          'target',
+          'rewardXp',
+          'current',
+          'completed',
+          'completedAt',
+          'lastEvidenceId',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.userId == userId
+        && isValidGoalCadence(data.cadence)
+        && progressId == data.cadence + '__' + data.periodKey
+        && data.periodKey is string
+        && data.periodKey.size() > 0
+        && data.periodKey.size() <= 64
+        && !data.periodKey.matches('.*[/].*')
+        && data.timezone is string
+        && data.timezone.size() > 0
+        && data.timezone.size() <= 64
+        && data.periodStartsAt is timestamp
+        && data.periodEndsAt is timestamp
+        && data.periodStartsAt < data.periodEndsAt
+        && data.eligibleFrom is timestamp
+        && data.eligibleFrom >= data.periodStartsAt
+        && data.eligibleFrom < data.periodEndsAt
+        && isValidGoalMetric(data.metric)
+        && data.target is int
+        && data.target > 0
+        && data.target <= 1000000000
+        && data.rewardXp == goalReward(data.cadence)
+        && data.current is int
+        && data.current >= 0
+        && data.current <= 1000000000
+        && data.completed is bool
+        && (data.completedAt == null || data.completedAt is timestamp)
+        && (data.lastEvidenceId == null
+          || (data.lastEvidenceId is string
+            && data.lastEvidenceId.size() > 0
+            && data.lastEvidenceId.size() <= 512
+            && !data.lastEvidenceId.matches('.*[/].*')))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function hasValidGoalProgressCreate(userId, progressId) {
+      let data = request.resource.data;
+      return hasValidGoalProgressShape(userId, progressId, data)
+        && hasMatchingGoalForProgress(userId, data)
+        && data.current == 0
+        && data.completed == false
+        && data.completedAt == null
+        && data.lastEvidenceId == null
+        && data.createdAt == request.time
+        && data.updatedAt == request.time;
+    }
+
+    function hasValidGoalProgressUpdate(userId, progressId) {
+      let before = resource.data;
+      let after = request.resource.data;
+      let evidencePath = goalEvidencePath(userId, after.lastEvidenceId);
+      let evidence = getAfter(evidencePath).data;
+      let nextValue = before.current + evidence.delta;
+      return hasValidGoalProgressShape(userId, progressId, after)
+        && after.lastEvidenceId is string
+        && after.lastEvidenceId != before.lastEvidenceId
+        && !exists(evidencePath)
+        && existsAfter(evidencePath)
+        && evidence.progressId == progressId
+        && evidence.metric == before.metric
+        && after.current == nextValue
+        && after.createdAt == before.createdAt
+        && after.userId == before.userId
+        && after.cadence == before.cadence
+        && after.periodKey == before.periodKey
+        && after.timezone == before.timezone
+        && after.periodStartsAt == before.periodStartsAt
+        && after.periodEndsAt == before.periodEndsAt
+        && after.eligibleFrom == before.eligibleFrom
+        && after.metric == before.metric
+        && after.target == before.target
+        && after.rewardXp == before.rewardXp
+        && after.updatedAt == request.time
+        && (before.completed
+          ? (after.completed
+            && after.completedAt == before.completedAt)
+          : (nextValue >= before.target
+            ? (after.completed
+              && after.completedAt == request.time
+              && !exists(goalCompletionPath(userId, progressId))
+              && existsAfter(goalCompletionPath(userId, progressId)))
+            : (after.completed == false && after.completedAt == null)))
+        && after.diff(before).affectedKeys().hasOnly([
+          'current',
+          'completed',
+          'completedAt',
+          'lastEvidenceId',
+          'updatedAt'
+        ]);
+    }
+
+    function hasValidTaskGoalEvidence(userId, evidenceId, cadence, data) {
+      let sourcePath = xpTransactionPath(userId, data.sourceId);
+      let source = get(sourcePath).data;
+      return data.sourceType == 'TASK_COMPLETED'
+        && evidenceId == cadence + '__TASK_COMPLETED__' + data.sourceId
+        && exists(sourcePath)
+        && source.eventType == 'TASK_COMPLETED'
+        && source.taskId == data.sourceId
+        && source.createdAt == data.occurredAt
+        && ((data.metric == 'tasksCompleted' && data.delta == 1)
+          || (data.metric == 'xpEarned'
+            && data.delta == source.amount));
+    }
+
+    function hasValidXpGoalEvidence(userId, evidenceId, cadence, data) {
+      let sourcePath = xpTransactionPath(userId, data.sourceId);
+      let source = get(sourcePath).data;
+      return data.sourceType == 'XP_TRANSACTION'
+        && evidenceId == cadence + '__XP_TRANSACTION__' + data.sourceId
+        && exists(sourcePath)
+        && source.eventType == 'ACHIEVEMENT_UNLOCKED'
+        && data.metric == 'xpEarned'
+        && data.delta == source.amount
+        && source.createdAt == data.occurredAt;
+    }
+
+    function hasValidPomodoroGoalEvidence(userId, evidenceId, cadence, data) {
+      let sourcePath = pomodoroSessionPath(userId, data.sourceId);
+      let source = get(sourcePath).data;
+      return data.sourceType == 'POMODORO_COMPLETED'
+        && evidenceId == cadence + '__POMODORO_COMPLETED__' + data.sourceId
+        && exists(sourcePath)
+        && source.mode == 'focus'
+        && source.sessionId == data.sourceId
+        && source.completedAt == data.occurredAt
+        && ((data.metric == 'pomodorosCompleted' && data.delta == 1)
+          || (data.metric == 'focusedSeconds'
+            && data.delta == source.plannedSeconds));
+    }
+
+    function hasValidGoalEvidenceCreate(userId, evidenceId) {
+      let data = request.resource.data;
+      let progressPath = goalProgressPath(userId, data.progressId);
+      let progress = getAfter(progressPath).data;
+      return data.keys().hasOnly([
+          'progressId',
+          'sourceType',
+          'sourceId',
+          'metric',
+          'delta',
+          'occurredAt',
+          'recordedAt'
+        ])
+        && data.keys().hasAll([
+          'progressId',
+          'sourceType',
+          'sourceId',
+          'metric',
+          'delta',
+          'occurredAt',
+          'recordedAt'
+        ])
+        && data.progressId is string
+        && data.progressId.size() > 0
+        && data.progressId.size() <= 192
+        && !data.progressId.matches('.*[/].*')
+        && data.sourceId is string
+        && data.sourceId.size() > 0
+        && data.sourceId.size() <= 128
+        && !data.sourceId.matches('.*[/].*')
+        && isValidGoalMetric(data.metric)
+        && data.delta is int
+        && data.delta >= 0
+        && data.delta <= 1000000000
+        && data.occurredAt is timestamp
+        && data.recordedAt == request.time
+        && exists(progressPath)
+        && existsAfter(progressPath)
+        && progress.lastEvidenceId == evidenceId
+        && progress.metric == data.metric
+        && data.occurredAt >= progress.eligibleFrom
+        && data.occurredAt < progress.periodEndsAt
+        && (hasValidTaskGoalEvidence(
+            userId,
+            evidenceId,
+            progress.cadence,
+            data
+          )
+          || hasValidXpGoalEvidence(
+            userId,
+            evidenceId,
+            progress.cadence,
+            data
+          )
+          || hasValidPomodoroGoalEvidence(
+            userId,
+            evidenceId,
+            progress.cadence,
+            data
+          ));
+    }
+
+    function hasValidGoalCompletionCreate(userId, progressId) {
+      let data = request.resource.data;
+      let progressPath = goalProgressPath(userId, progressId);
+      let before = get(progressPath).data;
+      let after = getAfter(progressPath).data;
+      let transactionPath = xpTransactionPath(userId, 'goal__' + progressId);
+      let xpTransaction = getAfter(transactionPath).data;
+      return data.keys().hasOnly([
+          'progressId',
+          'cadence',
+          'periodKey',
+          'metric',
+          'target',
+          'finalValue',
+          'rewardXp',
+          'completedAt'
+        ])
+        && data.keys().hasAll([
+          'progressId',
+          'cadence',
+          'periodKey',
+          'metric',
+          'target',
+          'finalValue',
+          'rewardXp',
+          'completedAt'
+        ])
+        && exists(progressPath)
+        && existsAfter(progressPath)
+        && before.completed == false
+        && before.current < before.target
+        && after.completed == true
+        && after.completedAt == request.time
+        && after.current >= after.target
+        && data.progressId == progressId
+        && data.cadence == after.cadence
+        && data.periodKey == after.periodKey
+        && data.metric == after.metric
+        && data.target == after.target
+        && data.finalValue == after.current
+        && data.rewardXp == after.rewardXp
+        && data.completedAt == request.time
+        && !exists(transactionPath)
+        && existsAfter(transactionPath)
+        && xpTransaction.eventType == 'GOAL_COMPLETED'
+        && xpTransaction.progressId == progressId;
+    }
+
+    function hasValidGoalStreakShape(data) {
+      return data.keys().hasOnly([
+          'current',
+          'best',
+          'productiveDays',
+          'lastProcessedProgressId',
+          'lastCompletedPeriodKey',
+          'lastCompletedAt',
+          'updatedAt'
+        ])
+        && data.keys().hasAll([
+          'current',
+          'best',
+          'productiveDays',
+          'lastProcessedProgressId',
+          'lastCompletedPeriodKey',
+          'lastCompletedAt',
+          'updatedAt'
+        ])
+        && data.current is int
+        && data.current >= 0
+        && data.current <= 1000000000
+        && data.best is int
+        && data.best >= data.current
+        && data.best <= 1000000000
+        && data.productiveDays is int
+        && data.productiveDays >= 0
+        && data.productiveDays <= 1000000000
+        && data.lastProcessedProgressId is string
+        && data.lastProcessedProgressId.size() > 0
+        && data.lastProcessedProgressId.size() <= 192
+        && !data.lastProcessedProgressId.matches('.*[/].*')
+        && data.lastCompletedPeriodKey is string
+        && data.lastCompletedPeriodKey.size() > 0
+        && data.lastCompletedPeriodKey.size() <= 64
+        && data.lastCompletedAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function hasNewDailyCompletionForStreak(userId, data) {
+      let completionPath = goalCompletionPath(
+        userId,
+        data.lastProcessedProgressId
+      );
+      let completion = getAfter(completionPath).data;
+      return !exists(completionPath)
+        && existsAfter(completionPath)
+        && completion.cadence == 'daily'
+        && completion.progressId == data.lastProcessedProgressId
+        && completion.completedAt == request.time;
+    }
+
+    function hasValidGoalStreakCreate(userId, streakId) {
+      let after = request.resource.data;
+      let completion = getAfter(goalCompletionPath(
+        userId,
+        after.lastProcessedProgressId
+      )).data;
+      return streakId == 'main'
+        && hasValidGoalStreakShape(after)
+        && hasNewDailyCompletionForStreak(userId, after)
+        && after.current == 1
+        && after.best == 1
+        && after.productiveDays == 1
+        && after.lastCompletedPeriodKey == completion.periodKey
+        && after.lastCompletedAt == request.time
+        && after.updatedAt == request.time
+        && getAfter(profilePath(userId)).data.streak == 1;
+    }
+
+    function hasValidGoalStreakUpdate(userId, streakId) {
+      let before = resource.data;
+      let after = request.resource.data;
+      let completion = getAfter(goalCompletionPath(
+        userId,
+        after.lastProcessedProgressId
+      )).data;
+      let newProgress = getAfter(goalProgressPath(
+        userId,
+        after.lastProcessedProgressId
+      )).data;
+      let priorProgress = get(goalProgressPath(
+        userId,
+        'daily__' + before.lastCompletedPeriodKey
+      )).data;
+      let advances = newProgress.periodStartsAt > priorProgress.periodStartsAt;
+      let consecutive = newProgress.periodStartsAt == priorProgress.periodEndsAt;
+      let expectedCurrent = consecutive ? before.current + 1 : 1;
+      let expectedBest = expectedCurrent > before.best
+        ? expectedCurrent
+        : before.best;
+      return streakId == 'main'
+        && hasValidGoalStreakShape(after)
+        && hasNewDailyCompletionForStreak(userId, after)
+        && after.productiveDays == before.productiveDays + 1
+        && after.lastProcessedProgressId != before.lastProcessedProgressId
+        && (advances
+          ? (after.current == expectedCurrent
+            && after.best == expectedBest
+            && after.lastCompletedPeriodKey == completion.periodKey
+            && after.lastCompletedAt == request.time)
+          : (after.current == before.current
+            && after.best == before.best
+            && after.lastCompletedPeriodKey == before.lastCompletedPeriodKey
+            && after.lastCompletedAt == before.lastCompletedAt))
+        && after.updatedAt == request.time
+        && getAfter(profilePath(userId)).data.streak == after.current;
+    }
+
+    function isValidPomodoroMode(mode) {
+      return mode == 'focus'
+        || mode == 'shortBreak'
+        || mode == 'longBreak';
+    }
+
+    function expectedPomodoroSeconds(profile, mode) {
+      return mode == 'focus'
+        ? profile.settings.pomodoro.focusMinutes * 60
+        : mode == 'shortBreak'
+          ? profile.settings.pomodoro.shortBreakMinutes * 60
+          : mode == 'longBreak'
+            ? profile.settings.pomodoro.longBreakMinutes * 60
+            : -1;
+    }
+
+    function hasValidPomodoroCurrentCreate(userId, stateId) {
+      let data = request.resource.data;
+      let profile = get(profilePath(userId)).data;
+      return stateId == 'current'
+        && data.keys().hasOnly([
+          'userId',
+          'sessionId',
+          'mode',
+          'plannedSeconds',
+          'startedAt',
+          'expectedEndAt'
+        ])
+        && data.keys().hasAll([
+          'userId',
+          'sessionId',
+          'mode',
+          'plannedSeconds',
+          'startedAt',
+          'expectedEndAt'
+        ])
+        && data.userId == userId
+        && data.sessionId is string
+        && data.sessionId.size() > 0
+        && data.sessionId.size() <= 128
+        && !data.sessionId.matches('.*[/].*')
+        && isValidPomodoroMode(data.mode)
+        && data.plannedSeconds is int
+        && data.plannedSeconds == expectedPomodoroSeconds(profile, data.mode)
+        && data.startedAt is timestamp
+        && data.startedAt <= request.time
+        && data.startedAt >= request.time - duration.value(10, 's')
+        && data.expectedEndAt
+          == data.startedAt + duration.value(data.plannedSeconds, 's');
+    }
+
+    function hasValidPomodoroSessionCreate(userId, sessionId) {
+      let data = request.resource.data;
+      let currentPath = pomodoroCurrentPath(userId);
+      let current = get(currentPath).data;
+      return data.keys().hasOnly([
+          'userId',
+          'sessionId',
+          'mode',
+          'plannedSeconds',
+          'startedAt',
+          'expectedEndAt',
+          'completedAt'
+        ])
+        && data.keys().hasAll([
+          'userId',
+          'sessionId',
+          'mode',
+          'plannedSeconds',
+          'startedAt',
+          'expectedEndAt',
+          'completedAt'
+        ])
+        && exists(currentPath)
+        && !existsAfter(currentPath)
+        && data.userId == userId
+        && data.sessionId == sessionId
+        && data.sessionId == current.sessionId
+        && data.mode == current.mode
+        && data.plannedSeconds == current.plannedSeconds
+        && data.startedAt == current.startedAt
+        && data.expectedEndAt == current.expectedEndAt
+        && data.completedAt == request.time
+        && request.time >= current.expectedEndAt;
+    }
+
     function isKnownAchievement(achievementId) {
       return achievementId == 'first-mission'
         || achievementId == 'tasks-10'
@@ -248,8 +845,13 @@ service cloud.firestore {
         || achievementId == 'first-pomodoro'
         || achievementId == 'pomodoros-10'
         || achievementId == 'pomodoros-50'
+        || achievementId == 'streak-3'
         || achievementId == 'streak-7'
+        || achievementId == 'streak-14'
         || achievementId == 'streak-30'
+        || achievementId == 'streak-60'
+        || achievementId == 'streak-100'
+        || achievementId == 'streak-365'
         || achievementId == 'perfect-week'
         || achievementId == 'first-project'
         || achievementId == 'projects-10';
@@ -260,6 +862,16 @@ service cloud.firestore {
         || achievementId == 'tasks-10'
         || achievementId == 'tasks-50'
         || achievementId == 'tasks-100'
+        || achievementId == 'first-pomodoro'
+        || achievementId == 'pomodoros-10'
+        || achievementId == 'pomodoros-50'
+        || achievementId == 'streak-3'
+        || achievementId == 'streak-7'
+        || achievementId == 'streak-14'
+        || achievementId == 'streak-30'
+        || achievementId == 'streak-60'
+        || achievementId == 'streak-100'
+        || achievementId == 'streak-365'
         || achievementId == 'first-project'
         || achievementId == 'projects-10';
     }
@@ -272,8 +884,13 @@ service cloud.firestore {
         : achievementId == 'first-pomodoro'
           || achievementId == 'pomodoros-10'
           || achievementId == 'pomodoros-50' ? 'pomodorosCompleted'
-        : achievementId == 'streak-7'
-          || achievementId == 'streak-30' ? 'bestStreak'
+        : achievementId == 'streak-3'
+          || achievementId == 'streak-7'
+          || achievementId == 'streak-14'
+          || achievementId == 'streak-30'
+          || achievementId == 'streak-60'
+          || achievementId == 'streak-100'
+          || achievementId == 'streak-365' ? 'bestStreak'
         : achievementId == 'perfect-week' ? 'perfectWeeks'
         : achievementId == 'first-project'
           || achievementId == 'projects-10' ? 'projectsCompleted'
@@ -288,8 +905,13 @@ service cloud.firestore {
         : achievementId == 'first-pomodoro' ? 1
         : achievementId == 'pomodoros-10' ? 10
         : achievementId == 'pomodoros-50' ? 50
+        : achievementId == 'streak-3' ? 3
         : achievementId == 'streak-7' ? 7
+        : achievementId == 'streak-14' ? 14
         : achievementId == 'streak-30' ? 30
+        : achievementId == 'streak-60' ? 60
+        : achievementId == 'streak-100' ? 100
+        : achievementId == 'streak-365' ? 365
         : achievementId == 'perfect-week' ? 1
         : achievementId == 'first-project' ? 1
         : achievementId == 'projects-10' ? 10
@@ -304,8 +926,13 @@ service cloud.firestore {
         : achievementId == 'first-pomodoro' ? 25
         : achievementId == 'pomodoros-10' ? 50
         : achievementId == 'pomodoros-50' ? 150
+        : achievementId == 'streak-3' ? 50
         : achievementId == 'streak-7' ? 100
+        : achievementId == 'streak-14' ? 200
         : achievementId == 'streak-30' ? 400
+        : achievementId == 'streak-60' ? 500
+        : achievementId == 'streak-100' ? 750
+        : achievementId == 'streak-365' ? 1000
         : achievementId == 'perfect-week' ? 200
         : achievementId == 'first-project' ? 75
         : achievementId == 'projects-10' ? 300
@@ -320,8 +947,13 @@ service cloud.firestore {
         : achievementId == 'first-pomodoro' ? 'Primeiro Pomodoro'
         : achievementId == 'pomodoros-10' ? '10 Pomodoros'
         : achievementId == 'pomodoros-50' ? '50 Pomodoros'
+        : achievementId == 'streak-3' ? '3 dias de streak'
         : achievementId == 'streak-7' ? '7 dias de streak'
+        : achievementId == 'streak-14' ? '14 dias de streak'
         : achievementId == 'streak-30' ? '30 dias de streak'
+        : achievementId == 'streak-60' ? '60 dias de streak'
+        : achievementId == 'streak-100' ? '100 dias de streak'
+        : achievementId == 'streak-365' ? '365 dias de streak'
         : achievementId == 'perfect-week' ? 'Semana Perfeita'
         : achievementId == 'first-project' ? 'Primeiro projeto concluído'
         : achievementId == 'projects-10' ? '10 projetos concluídos'
@@ -589,12 +1221,16 @@ service cloud.firestore {
         && data.updatedAt is timestamp;
     }
 
-    function hasValidRegularProfileUpdate() {
+    function hasValidRegularProfileUpdate(userId) {
       let before = resource.data;
       let after = request.resource.data;
       return after.level == before.level
         && after.xp == before.xp
         && after.streak == before.streak
+        && (!before.keys().hasAll(['dailyTaskGoal'])
+          ? after.dailyTaskGoal == null
+          : (after.dailyTaskGoal == before.dailyTaskGoal
+            || hasSynchronizedDailyGoalProfile(userId)))
         && (!before.keys().hasAll(['lastXpTransactionId'])
           ? after.lastXpTransactionId == null
           : after.lastXpTransactionId == before.lastXpTransactionId)
@@ -607,18 +1243,11 @@ service cloud.firestore {
         && (!before.onboardingCompleted || after.onboardingCompleted)
         && (before.onboardingCompleted
           || !after.onboardingCompleted
-          || (isValidPrimaryObjective(after.primaryObjective)
-            && after.dailyTaskGoal is int
-            && after.dailyTaskGoal >= 1
-            && after.dailyTaskGoal <= 50))
+          || isValidPrimaryObjective(after.primaryObjective))
         && (!before.onboardingCompleted
           || !before.keys().hasAll(['primaryObjective'])
           || before.primaryObjective == null
           || after.primaryObjective != null)
-        && (!before.onboardingCompleted
-          || !before.keys().hasAll(['dailyTaskGoal'])
-          || before.dailyTaskGoal == null
-          || after.dailyTaskGoal != null)
         && after.diff(before).affectedKeys().hasOnly([
           'name',
           'email',
@@ -641,7 +1270,9 @@ service cloud.firestore {
           && xpTransaction.taskId == transactionId)
         || (xpTransaction.eventType == 'ACHIEVEMENT_UNLOCKED'
           && transactionId
-            == achievementTransactionId(xpTransaction.achievementId));
+            == achievementTransactionId(xpTransaction.achievementId))
+        || (xpTransaction.eventType == 'GOAL_COMPLETED'
+          && transactionId == 'goal__' + xpTransaction.progressId);
     }
 
     function hasValidXpProfileUpdate(userId) {
@@ -672,13 +1303,51 @@ service cloud.firestore {
             && after.xpWindowAmount
               == before.xpWindowAmount + xpTransaction.amount))
         && after.xpWindowAmount <= 1000
-        && after.streak == before.streak
+        && after.dailyTaskGoal == before.dailyTaskGoal
+        && (after.streak == before.streak
+          || (xpTransaction.eventType == 'GOAL_COMPLETED'
+            && xpTransaction.cadence == 'daily'
+            && getAfter(goalStreakPath(userId)).data.current == after.streak
+            && getAfter(goalStreakPath(userId)).data.lastProcessedProgressId
+              == xpTransaction.progressId
+            && getAfter(goalStreakPath(userId)).data.updatedAt == request.time))
         && after.diff(before).affectedKeys().hasOnly([
           'xp',
           'level',
           'lastXpTransactionId',
           'xpWindowStartedAt',
           'xpWindowAmount',
+          'streak',
+          'updatedAt'
+        ]);
+    }
+
+    function hasValidZeroXpGoalStreakProfileUpdate(userId) {
+      let before = resource.data;
+      let after = request.resource.data;
+      let streak = getAfter(goalStreakPath(userId)).data;
+      let transactionPath = xpTransactionPath(
+        userId,
+        'goal__' + streak.lastProcessedProgressId
+      );
+      let xpTransaction = getAfter(transactionPath).data;
+      return after.xp == before.xp
+        && after.level == before.level
+        && after.streak != before.streak
+        && after.streak == streak.current
+        && streak.updatedAt == request.time
+        && !exists(transactionPath)
+        && existsAfter(transactionPath)
+        && xpTransaction.eventType == 'GOAL_COMPLETED'
+        && xpTransaction.cadence == 'daily'
+        && xpTransaction.progressId == streak.lastProcessedProgressId
+        && xpTransaction.amount == 0
+        && after.lastXpTransactionId == before.lastXpTransactionId
+        && after.xpWindowStartedAt == before.xpWindowStartedAt
+        && after.xpWindowAmount == before.xpWindowAmount
+        && after.dailyTaskGoal == before.dailyTaskGoal
+        && after.diff(before).affectedKeys().hasOnly([
+          'streak',
           'updatedAt'
         ]);
     }
@@ -750,6 +1419,79 @@ service cloud.firestore {
           : (profileAfter.lastXpTransactionId == transactionId
             && profileAfter.xp == data.xpAfter
             && profileAfter.level == data.levelAfter));
+    }
+
+    function hasValidGoalXpTransactionCreate(userId, transactionId) {
+      let data = request.resource.data;
+      let completionPath = goalCompletionPath(userId, data.progressId);
+      let completion = getAfter(completionPath).data;
+      let userProfilePath = profilePath(userId);
+      let profileBefore = get(userProfilePath).data;
+      let profileAfter = getAfter(userProfilePath).data;
+      let expectedAmount = expectedXpAmountForReward(
+        profileBefore,
+        goalReward(data.cadence)
+      );
+      return data.keys().hasOnly([
+          'userId',
+          'amount',
+          'reason',
+          'eventType',
+          'progressId',
+          'cadence',
+          'createdAt',
+          'xpBefore',
+          'xpAfter',
+          'levelBefore',
+          'levelAfter'
+        ])
+        && data.keys().hasAll([
+          'userId',
+          'amount',
+          'reason',
+          'eventType',
+          'progressId',
+          'cadence',
+          'createdAt',
+          'xpBefore',
+          'xpAfter',
+          'levelBefore',
+          'levelAfter'
+        ])
+        && data.userId == userId
+        && data.eventType == 'GOAL_COMPLETED'
+        && data.progressId is string
+        && data.progressId.size() > 0
+        && data.progressId.size() <= 192
+        && !data.progressId.matches('.*[/].*')
+        && isValidGoalCadence(data.cadence)
+        && transactionId == 'goal__' + data.progressId
+        && data.amount == expectedAmount
+        && data.reason == (expectedAmount == 0
+          ? 'Limite diário de XP atingido'
+          : 'Meta concluída')
+        && data.createdAt == request.time
+        && data.xpBefore == profileBefore.xp
+        && data.xpAfter == profileBefore.xp + expectedAmount
+        && data.levelBefore == profileBefore.level
+        && data.levelAfter == profileAfter.level
+        && profileAfter.xp == data.xpAfter
+        && isValidLevelForXp(data.levelAfter, data.xpAfter)
+        && !exists(completionPath)
+        && existsAfter(completionPath)
+        && completion.progressId == data.progressId
+        && completion.cadence == data.cadence
+        && completion.rewardXp == goalReward(data.cadence)
+        && completion.completedAt == request.time
+        && (expectedAmount == 0
+          ? (profileAfter.level == profileBefore.level
+            && profileAfter.lastXpTransactionId
+              == profileBefore.lastXpTransactionId
+            && profileAfter.xpWindowStartedAt
+              == profileBefore.xpWindowStartedAt
+            && profileAfter.xpWindowAmount
+              == profileBefore.xpWindowAmount)
+          : profileAfter.lastXpTransactionId == transactionId);
     }
 
     function hasProjectCompletionAfter(userId, projectId) {
@@ -844,7 +1586,9 @@ service cloud.firestore {
         || (evidence.metric == 'bestStreak'
           && after.tasksCompleted == before.tasksCompleted
           && after.pomodorosCompleted == before.pomodorosCompleted
-          && after.bestStreak == before.bestStreak + 1
+          && after.bestStreak == (int(evidence.sourceId) > before.bestStreak
+            ? int(evidence.sourceId)
+            : before.bestStreak)
           && after.perfectWeeks == before.perfectWeeks
           && after.projectsCompleted == before.projectsCompleted)
         || (evidence.metric == 'perfectWeeks'
@@ -926,6 +1670,30 @@ service cloud.firestore {
         && source.completedAt == data.occurredAt;
     }
 
+    function hasValidPomodoroAchievementEvidence(userId, evidenceId, data) {
+      let sourcePath = pomodoroSessionPath(userId, data.sourceId);
+      let source = get(sourcePath).data;
+      return data.sourceType == 'POMODORO_COMPLETED'
+        && data.metric == 'pomodorosCompleted'
+        && evidenceId == 'pomodoro_completed__' + data.sourceId
+        && exists(sourcePath)
+        && source.mode == 'focus'
+        && source.sessionId == data.sourceId
+        && source.completedAt == data.occurredAt;
+    }
+
+    function hasValidStreakAchievementEvidence(userId, evidenceId, data) {
+      let sourcePath = goalStreakPath(userId);
+      let source = get(sourcePath).data;
+      return data.sourceType == 'ACTIVITY_STREAK'
+        && data.metric == 'bestStreak'
+        && data.sourceId.matches('^[1-9][0-9]*$')
+        && int(data.sourceId) == source.best
+        && evidenceId == 'activity_streak__' + data.sourceId
+        && exists(sourcePath)
+        && source.lastCompletedAt == data.occurredAt;
+    }
+
     function hasValidAchievementEvidenceCreate(userId, evidenceId) {
       let data = request.resource.data;
       return data.keys().hasOnly([
@@ -949,7 +1717,9 @@ service cloud.firestore {
         && data.occurredAt is timestamp
         && data.recordedAt == request.time
         && (hasValidTaskAchievementEvidence(userId, evidenceId, data)
-          || hasValidProjectAchievementEvidence(userId, evidenceId, data))
+          || hasValidProjectAchievementEvidence(userId, evidenceId, data)
+          || hasValidPomodoroAchievementEvidence(userId, evidenceId, data)
+          || hasValidStreakAchievementEvidence(userId, evidenceId, data))
         && hasMatchingStatsIncrementForEvidence(userId, evidenceId, data);
     }
 
@@ -1095,9 +1865,11 @@ service cloud.firestore {
         && request.resource.data.email == request.auth.token.email
         && request.resource.data.createdAt == resource.data.createdAt
         && request.resource.data.updatedAt == request.time
-        && (request.resource.data.xp == resource.data.xp
-          ? hasValidRegularProfileUpdate()
-          : hasValidXpProfileUpdate(userId));
+        && (request.resource.data.xp != resource.data.xp
+          ? hasValidXpProfileUpdate(userId)
+          : request.resource.data.streak != resource.data.streak
+            ? hasValidZeroXpGoalStreakProfileUpdate(userId)
+            : hasValidRegularProfileUpdate(userId));
 
       allow delete: if false;
 
@@ -1179,6 +1951,99 @@ service cloud.firestore {
         allow update, delete: if false;
       }
 
+      match /goals/{cadence} {
+        allow get, list: if isOwner(userId);
+
+        allow create: if isOwner(userId)
+          && cadence == request.resource.data.cadence
+          && hasValidGoalShape(userId, cadence)
+          && request.resource.data.createdAt == request.time
+          && request.resource.data.updatedAt == request.time
+          && (cadence != 'daily'
+            || hasSynchronizedDailyGoalProfile(userId));
+
+        allow update: if isOwner(userId)
+          && cadence == resource.data.cadence
+          && hasValidGoalShape(userId, cadence)
+          && request.resource.data.userId == resource.data.userId
+          && request.resource.data.cadence == resource.data.cadence
+          && request.resource.data.rewardXp == resource.data.rewardXp
+          && request.resource.data.createdAt == resource.data.createdAt
+          && request.resource.data.updatedAt == request.time
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'metric',
+            'target',
+            'active',
+            'effectiveFromPeriodKey',
+            'updatedAt'
+          ])
+          && (cadence != 'daily'
+            || hasSynchronizedDailyGoalProfile(userId));
+
+        allow delete: if false;
+      }
+
+      match /goalProgress/{progressId} {
+        allow get, list: if isOwner(userId);
+
+        allow create: if isOwner(userId)
+          && hasValidGoalProgressCreate(userId, progressId);
+
+        allow update: if isOwner(userId)
+          && hasValidGoalProgressUpdate(userId, progressId);
+
+        allow delete: if false;
+      }
+
+      match /goalEvidence/{evidenceId} {
+        allow get, list: if isOwner(userId);
+
+        allow create: if isOwner(userId)
+          && hasValidGoalEvidenceCreate(userId, evidenceId);
+
+        allow update, delete: if false;
+      }
+
+      match /goalCompletions/{progressId} {
+        allow get, list: if isOwner(userId);
+
+        allow create: if isOwner(userId)
+          && hasValidGoalCompletionCreate(userId, progressId);
+
+        allow update, delete: if false;
+      }
+
+      match /goalStreak/{streakId} {
+        allow get, list: if isOwner(userId);
+
+        allow create: if isOwner(userId)
+          && hasValidGoalStreakCreate(userId, streakId);
+
+        allow update: if isOwner(userId)
+          && hasValidGoalStreakUpdate(userId, streakId);
+
+        allow delete: if false;
+      }
+
+      match /pomodoroState/{stateId} {
+        allow get: if isOwner(userId);
+
+        allow create: if isOwner(userId)
+          && hasValidPomodoroCurrentCreate(userId, stateId);
+
+        allow delete: if isOwner(userId) && stateId == 'current';
+        allow list, update: if false;
+      }
+
+      match /pomodoroSessions/{sessionId} {
+        allow get, list: if isOwner(userId);
+
+        allow create: if isOwner(userId)
+          && hasValidPomodoroSessionCreate(userId, sessionId);
+
+        allow update, delete: if false;
+      }
+
       match /tasks/{taskId} {
         allow get, list: if isOwner(userId);
 
@@ -1241,7 +2106,8 @@ service cloud.firestore {
             || hasValidAchievementXpTransactionCreate(
               userId,
               transactionId
-            ));
+            )
+            || hasValidGoalXpTransactionCreate(userId, transactionId));
 
         allow update, delete: if false;
       }

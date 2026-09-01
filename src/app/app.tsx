@@ -4,15 +4,21 @@ import { router } from "@/app/router"
 import { AchievementsProvider } from "@/features/achievements"
 import { AuthProvider } from "@/features/auth"
 import { GamificationProvider } from "@/features/gamification"
+import { GoalsProvider } from "@/features/goals"
+import { PomodoroProvider } from "@/features/pomodoro"
 
 export function App() {
   return (
     <AuthProvider>
-      <GamificationProvider>
-        <AchievementsProvider>
-          <RouterProvider router={router} />
-        </AchievementsProvider>
-      </GamificationProvider>
+      <PomodoroProvider>
+        <GoalsProvider>
+          <GamificationProvider>
+            <AchievementsProvider>
+              <RouterProvider router={router} />
+            </AchievementsProvider>
+          </GamificationProvider>
+        </GoalsProvider>
+      </PomodoroProvider>
     </AuthProvider>
   )
 }

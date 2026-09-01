@@ -145,7 +145,6 @@ interface CompleteOnboardingInput {
   primaryArea: ITAreaId
   secondaryAreas: ITAreaId[]
   primaryObjective: PrimaryObjectiveId
-  dailyTaskGoal: number
   timezone: string
   currentSettings: UserProfile["settings"]
 }
@@ -157,7 +156,6 @@ export async function completeUserOnboarding({
   primaryArea,
   secondaryAreas,
   primaryObjective,
-  dailyTaskGoal,
   timezone,
   currentSettings,
 }: CompleteOnboardingInput) {
@@ -167,7 +165,6 @@ export async function completeUserOnboarding({
     primaryArea,
     secondaryAreas,
     primaryObjective,
-    dailyTaskGoal,
     onboardingCompleted: true,
     settings: {
       ...currentSettings,

@@ -4,11 +4,12 @@ import {
   Flame,
   LoaderCircle,
   Sparkles,
+  Target,
   Trophy,
   Zap,
   type LucideIcon,
 } from "lucide-react"
-import { useMemo, useState } from "react"
+import { useState } from "react"
 import { useNavigate } from "react-router-dom"
 
 import { Badge } from "@/components/ui/badge"
@@ -21,7 +22,13 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { useAuth } from "@/features/auth"
-import { XpProgress, useXpTransactions } from "@/features/gamification"
+import {
+  XpProgress,
+  useXpEarnedSince,
+  useXpTransactions,
+  type XpTransaction,
+} from "@/features/gamification"
+import { GOAL_METRIC_LABELS, useGoals } from "@/features/goals"
 import { useTasks } from "@/features/tasks/hooks/use-tasks"
 
 interface StatItem {
@@ -40,19 +47,29 @@ function formatTransactionDate(date: Date) {
   }).format(date)
 }
 
+function getTransactionTitle(transaction: XpTransaction) {
+  if (transaction.eventType === "TASK_COMPLETED") return transaction.taskTitle
+  if (transaction.eventType === "ACHIEVEMENT_UNLOCKED") {
+    return transaction.achievementName
+  }
+  return `Meta ${transaction.cadence === "daily" ? "diária" : transaction.cadence === "weekly" ? "semanal" : "mensal"}`
+}
+
 export function DashboardPage() {
   const navigate = useNavigate()
   const { user, profile } = useAuth()
   const taskState = useTasks(user?.uid)
   const xpState = useXpTransactions(user?.uid, 8)
-  const [dashboardOpenedAt] = useState(() => Date.now())
-
-  const weeklyXp = useMemo(() => {
-    const start = dashboardOpenedAt - 7 * 24 * 60 * 60 * 1_000
-    return xpState.transactions
-      .filter((transaction) => transaction.createdAt.toMillis() >= start)
-      .reduce((total, transaction) => total + transaction.amount, 0)
-  }, [dashboardOpenedAt, xpState.transactions])
+  const [weeklyStart] = useState(() => Date.now() - 7 * 24 * 60 * 60 * 1_000)
+  const weeklyXp = useXpEarnedSince(user?.uid, weeklyStart)
+  const goals = useGoals(user?.uid, profile?.settings?.timezone ?? "UTC")
+  const dailyProgress = goals.currentProgress.get("daily")
+  const dailyPercentage = dailyProgress
+    ? Math.min(
+        100,
+        Math.round((dailyProgress.current / dailyProgress.target) * 100),
+      )
+    : 0
 
   const completedTasks = taskState.tasks.filter(
     (task) => task.status === "completed",
@@ -76,15 +93,27 @@ export function DashboardPage() {
     },
     {
       label: "XP nos últimos 7 dias",
-      value: String(weeklyXp),
+      value: weeklyXp.isLoading ? "…" : String(weeklyXp.amount),
       detail: `${profile?.xp ?? 0} XP acumulado`,
       icon: Trophy,
     },
     {
-      label: "Sequência",
-      value: `${profile?.streak ?? 0} dias`,
-      detail: "Consistência atual",
+      label: "Streak atual",
+      value: `${goals.streak?.current ?? profile?.streak ?? 0} dias`,
+      detail: "Metas diárias consecutivas",
       icon: Flame,
+    },
+    {
+      label: "Melhor streak",
+      value: `${goals.streak?.best ?? 0} dias`,
+      detail: "Melhor sequência registrada",
+      icon: Trophy,
+    },
+    {
+      label: "Dias produtivos",
+      value: String(goals.streak?.productiveDays ?? 0),
+      detail: "Metas diárias concluídas",
+      icon: CheckCircle2,
     },
   ]
 
@@ -107,7 +136,7 @@ export function DashboardPage() {
       </section>
 
       <section
-        className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"
+        className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3"
         aria-label="Resumo de produtividade"
       >
         {stats.map((stat) => {
@@ -137,12 +166,55 @@ export function DashboardPage() {
         })}
       </section>
 
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <CardTitle>Meta diária</CardTitle>
+              <CardDescription className="mt-1.5">
+                {dailyProgress
+                  ? `${dailyProgress.current} de ${dailyProgress.target} · ${GOAL_METRIC_LABELS[dailyProgress.metric]}`
+                  : "Crie uma meta diária para acompanhar seu progresso."}
+              </CardDescription>
+            </div>
+            <span className="flex size-11 items-center justify-center rounded-xl bg-primary/10 text-primary">
+              <Target className="size-5" />
+            </span>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center justify-between text-sm">
+            <span>
+              {dailyProgress?.completed
+                ? "Meta diária concluída!"
+                : "Progresso de hoje"}
+            </span>
+            <span className="font-semibold">{dailyPercentage}%</span>
+          </div>
+          <div className="mt-3 h-3 overflow-hidden rounded-full bg-secondary">
+            <div
+              className="h-full rounded-full bg-primary transition-all"
+              style={{ width: `${dailyPercentage}%` }}
+            />
+          </div>
+          {!dailyProgress && (
+            <Button
+              className="mt-4"
+              variant="outline"
+              onClick={() => navigate("/goals")}
+            >
+              Criar meta
+            </Button>
+          )}
+        </CardContent>
+      </Card>
+
       <section className="grid gap-6 xl:grid-cols-[1.4fr_1fr]">
         <Card>
           <CardHeader>
             <CardTitle>Histórico de XP</CardTitle>
             <CardDescription>
-              Cada recompensa é registrada uma única vez por tarefa.
+              Recompensas auditáveis de tarefas, conquistas e metas.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
@@ -169,9 +241,7 @@ export function DashboardPage() {
                 >
                   <div className="min-w-0">
                     <p className="truncate text-sm font-medium">
-                      {transaction.eventType === "TASK_COMPLETED"
-                        ? transaction.taskTitle
-                        : transaction.achievementName}
+                      {getTransactionTitle(transaction)}
                     </p>
                     <p className="mt-1 text-xs text-muted-foreground">
                       {transaction.reason} ·{" "}
@@ -202,7 +272,7 @@ export function DashboardPage() {
                 </CardDescription>
               </div>
               <span className="flex size-11 items-center justify-center rounded-xl bg-amber-500/10 text-amber-400">
-                <Trophy className="size-5" aria-hidden="true" />
+                <Trophy className="size-5" />
               </span>
             </div>
           </CardHeader>
@@ -213,7 +283,7 @@ export function DashboardPage() {
                 Proteção anti-abuso
               </p>
               <p className="mt-1 text-sm font-medium">
-                Uma recompensa por tarefa · 1.000 XP por ciclo individual de 24h
+                Uma recompensa por fonte · 1.000 XP por ciclo individual de 24h
               </p>
             </div>
           </CardContent>

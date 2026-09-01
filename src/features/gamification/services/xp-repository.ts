@@ -9,6 +9,7 @@ import {
   serverTimestamp,
   setDoc,
   Timestamp,
+  where,
   type DocumentReference,
   type Firestore,
   type Transaction,
@@ -26,6 +27,7 @@ import type {
   XpAwardResult,
   XpTransaction,
   XpTransactionDocument,
+  GoalXpTransactionDocument,
 } from "@/features/gamification/types/gamification"
 import type { UserProfile } from "@/features/profile/types/user-profile"
 import type { TaskPriority } from "@/features/tasks/types/task"
@@ -60,6 +62,8 @@ interface XpClockDocument {
   syncedAt: Timestamp
 }
 
+const serverClockOffsets = new Map<string, number>()
+
 function getXpClockReference(uid: string) {
   return doc(
     getFirestoreInstance(),
@@ -72,13 +76,28 @@ function getXpClockReference(uid: string) {
 
 async function synchronizeXpServerTime(uid: string) {
   const reference = getXpClockReference(uid)
+  const requestStartedAt = Date.now()
   await setDoc(reference, { syncedAt: serverTimestamp() })
   const snapshot = await getDocFromServer(reference)
+  const responseReceivedAt = Date.now()
   const syncedAt = snapshot.data()?.syncedAt
   if (!(syncedAt instanceof Timestamp)) {
     throw new Error("Não foi possível sincronizar o relógio de XP.")
   }
+  const clientMidpoint =
+    requestStartedAt + (responseReceivedAt - requestStartedAt) / 2
+  serverClockOffsets.set(uid, syncedAt.toMillis() - clientMidpoint)
   return syncedAt
+}
+
+export async function synchronizeServerClock(uid: string) {
+  await synchronizeXpServerTime(uid)
+  return getSynchronizedServerNow(uid)
+}
+
+export function getSynchronizedServerNow(uid: string) {
+  const offset = serverClockOffsets.get(uid)
+  return offset === undefined ? null : Date.now() + offset
 }
 
 function isPermissionDenied(error: unknown) {
@@ -209,6 +228,122 @@ export async function prepareTaskXpAward(
   }
 }
 
+export interface PreparedGoalXpAward {
+  result: XpAwardResult
+  profileReference: DocumentReference<UserProfile>
+  transactionReference: DocumentReference<XpTransactionDocument>
+  profileUpdates: Record<string, unknown> | null
+  transactionDocument: WithFieldValue<GoalXpTransactionDocument> | null
+}
+
+export async function prepareGoalXpAward(
+  transaction: Transaction,
+  uid: string,
+  progressId: string,
+  cadence: "daily" | "weekly" | "monthly",
+  reward: number,
+  serverNow: Timestamp,
+): Promise<PreparedGoalXpAward> {
+  const profileReference = getProfileReference(uid)
+  const transactionReference = getXpTransactionReference(
+    uid,
+    `goal__${progressId}`,
+  )
+  const [profileSnapshot, transactionSnapshot] = await Promise.all([
+    transaction.get(profileReference),
+    transaction.get(transactionReference),
+  ])
+  if (!profileSnapshot.exists()) {
+    throw new Error("Perfil não encontrado para conceder XP.")
+  }
+  const profile = profileSnapshot.data()
+  if (transactionSnapshot.exists()) {
+    return {
+      result: {
+        transactionId: `goal__${progressId}`,
+        amount: 0,
+        xpBefore: profile.xp,
+        xpAfter: profile.xp,
+        levelBefore: profile.level,
+        levelAfter: profile.level,
+        dailyLimitReached: false,
+        alreadyProcessed: true,
+      },
+      profileReference,
+      transactionReference,
+      profileUpdates: null,
+      transactionDocument: null,
+    }
+  }
+
+  const windowStartedAt = profile.xpWindowStartedAt ?? null
+  const windowExpired =
+    !windowStartedAt ||
+    serverNow.toMillis() - windowStartedAt.toMillis() >= XP_WINDOW_DURATION_MS
+  const currentWindowAmount = windowExpired ? 0 : (profile.xpWindowAmount ?? 0)
+  const dailyLimitReached = currentWindowAmount + reward > XP_DAILY_LIMIT
+  const amount = dailyLimitReached ? 0 : reward
+  const xpBefore = profile.xp
+  const xpAfter = xpBefore + amount
+  const levelBefore = getLevelForXp(xpBefore)
+  const levelAfter = getLevelForXp(xpAfter)
+  const transactionId = `goal__${progressId}`
+
+  return {
+    result: {
+      transactionId,
+      amount,
+      xpBefore,
+      xpAfter,
+      levelBefore,
+      levelAfter,
+      dailyLimitReached,
+      alreadyProcessed: false,
+    },
+    profileReference,
+    transactionReference,
+    profileUpdates:
+      amount === 0
+        ? null
+        : {
+            xp: xpAfter,
+            level: levelAfter,
+            lastXpTransactionId: transactionId,
+            xpWindowStartedAt: windowExpired
+              ? serverTimestamp()
+              : windowStartedAt,
+            xpWindowAmount: currentWindowAmount + amount,
+            updatedAt: serverTimestamp(),
+          },
+    transactionDocument: {
+      userId: uid,
+      amount,
+      reason: dailyLimitReached
+        ? "Limite diário de XP atingido"
+        : "Meta concluída",
+      eventType: "GOAL_COMPLETED",
+      progressId,
+      cadence,
+      createdAt: serverTimestamp(),
+      xpBefore,
+      xpAfter,
+      levelBefore,
+      levelAfter,
+    },
+  }
+}
+
+export function applyPreparedGoalXpAward(
+  transaction: Transaction,
+  award: PreparedGoalXpAward,
+) {
+  if (!award.transactionDocument) return
+  transaction.set(award.transactionReference, award.transactionDocument)
+  if (award.profileUpdates) {
+    transaction.update(award.profileReference, award.profileUpdates)
+  }
+}
+
 export function applyPreparedXpAward(
   transaction: Transaction,
   award: PreparedXpAward,
@@ -239,6 +374,52 @@ export function subscribeToXpTransactions(
         snapshot.docs.map((transactionSnapshot) => ({
           id: transactionSnapshot.id,
           ...(transactionSnapshot.data() as XpTransactionDocument),
+        })),
+      ),
+    onError,
+  )
+}
+
+export function subscribeToAllXpTransactions(
+  uid: string,
+  onValue: (transactions: XpTransaction[]) => void,
+  onError: (error: Error) => void,
+): Unsubscribe {
+  const transactionQuery = query(
+    collection(getFirestoreInstance(), "users", uid, "xpTransactions"),
+    orderBy("createdAt", "asc"),
+  )
+  return onSnapshot(
+    transactionQuery,
+    (snapshot) =>
+      onValue(
+        snapshot.docs.map((item) => ({
+          id: item.id,
+          ...(item.data() as XpTransactionDocument),
+        })),
+      ),
+    onError,
+  )
+}
+
+export function subscribeToXpTransactionsSince(
+  uid: string,
+  since: Timestamp,
+  onValue: (transactions: XpTransaction[]) => void,
+  onError: (error: Error) => void,
+): Unsubscribe {
+  const transactionQuery = query(
+    collection(getFirestoreInstance(), "users", uid, "xpTransactions"),
+    where("createdAt", ">=", since),
+    orderBy("createdAt", "asc"),
+  )
+  return onSnapshot(
+    transactionQuery,
+    (snapshot) =>
+      onValue(
+        snapshot.docs.map((item) => ({
+          id: item.id,
+          ...(item.data() as XpTransactionDocument),
         })),
       ),
     onError,

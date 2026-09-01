@@ -4,6 +4,7 @@ import {
   getDocFromServer,
   getDocs,
   onSnapshot,
+  orderBy,
   query,
   runTransaction,
   serverTimestamp,
@@ -45,6 +46,8 @@ import type {
   XpAwardResult,
 } from "@/features/gamification/types/gamification"
 import type { UserProfile } from "@/features/profile/types/user-profile"
+import type { PomodoroSessionDocument } from "@/features/pomodoro/types/pomodoro"
+import type { GoalStreakDocument } from "@/features/goals/types/goal"
 import type {
   ProjectCompletionDocument,
   ProjectDocument,
@@ -57,6 +60,8 @@ interface MetricEvidenceInput {
   sourceType: AchievementEvidenceSource
   sourceId: string
   occurredAt: Timestamp
+  value?: number
+  strategy?: "increment" | "max"
 }
 
 interface UnlockResult {
@@ -387,7 +392,10 @@ async function recordMetricEvidence(
         recordedAt: serverTimestamp(),
       })
       transaction.update(statsReference, {
-        [input.metric]: stats[input.metric] + 1,
+        [input.metric]:
+          input.strategy === "max"
+            ? Math.max(stats[input.metric], input.value ?? 0)
+            : stats[input.metric] + (input.value ?? 1),
         lastEvidenceId: input.evidenceId,
         updatedAt: serverTimestamp(),
       })
@@ -436,6 +444,86 @@ export async function processPersistedTaskCompletionForAchievements(
     uid,
     taskId,
     snapshot.data().createdAt,
+    showFeedback,
+  )
+}
+
+export async function processPomodoroCompletionForAchievements(
+  uid: string,
+  sessionId: string,
+  occurredAt: Timestamp,
+  showFeedback = true,
+) {
+  await ensureAchievementStats(uid)
+  await recordMetricEvidence(
+    uid,
+    {
+      evidenceId: `pomodoro_completed__${sessionId}`,
+      metric: "pomodorosCompleted",
+      sourceType: "POMODORO_COMPLETED",
+      sourceId: sessionId,
+      occurredAt,
+    },
+    showFeedback,
+  )
+}
+
+export async function processPersistedPomodoroCompletionForAchievements(
+  uid: string,
+  sessionId: string,
+  showFeedback = true,
+) {
+  const snapshot = await getDocFromServer(
+    doc(getFirestoreInstance(), "users", uid, "pomodoroSessions", sessionId),
+  )
+  if (!snapshot.exists()) return
+  const session = snapshot.data() as PomodoroSessionDocument
+  if (session.mode !== "focus") return
+  await processPomodoroCompletionForAchievements(
+    uid,
+    session.sessionId,
+    session.completedAt,
+    showFeedback,
+  )
+}
+
+export async function processActivityStreakForAchievements(
+  uid: string,
+  streak: number,
+  occurredAt: Timestamp,
+  showFeedback = true,
+) {
+  if (streak <= 0) return
+  await ensureAchievementStats(uid)
+  await recordMetricEvidence(
+    uid,
+    {
+      evidenceId: `activity_streak__${streak}`,
+      metric: "bestStreak",
+      sourceType: "ACTIVITY_STREAK",
+      sourceId: String(streak),
+      occurredAt,
+      value: streak,
+      strategy: "max",
+    },
+    showFeedback,
+  )
+}
+
+export async function processPersistedActivityStreakForAchievements(
+  uid: string,
+  showFeedback = true,
+) {
+  const snapshot = await getDocFromServer(
+    doc(getFirestoreInstance(), "users", uid, "goalStreak", "main"),
+  )
+  if (!snapshot.exists()) return
+  const streak = snapshot.data() as GoalStreakDocument
+  if (!streak.lastCompletedAt || streak.best <= 0) return
+  await processActivityStreakForAchievements(
+    uid,
+    streak.best,
+    streak.lastCompletedAt,
     showFeedback,
   )
 }
@@ -573,6 +661,25 @@ async function reconcileUserAchievements(uid: string) {
       false,
     )
   }
+
+  const pomodoroSnapshot = await getDocs(
+    query(
+      collection(database, "users", uid, "pomodoroSessions"),
+      orderBy("completedAt", "asc"),
+    ),
+  )
+  for (const sessionSnapshot of pomodoroSnapshot.docs) {
+    const session = sessionSnapshot.data() as PomodoroSessionDocument
+    if (session.mode === "focus") {
+      await processPomodoroCompletionForAchievements(
+        uid,
+        session.sessionId,
+        session.completedAt,
+        false,
+      )
+    }
+  }
+  await processPersistedActivityStreakForAchievements(uid, false)
 
   for (const achievement of ACHIEVEMENT_CATALOG.filter(
     (item) => item.sourceAvailable,

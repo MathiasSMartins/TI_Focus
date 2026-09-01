@@ -12,6 +12,8 @@ import {
   RequireOnboardingRoute,
 } from "@/features/auth"
 import { DashboardPage } from "@/features/dashboard/pages/dashboard-page"
+import { GoalsPage } from "@/features/goals"
+import { PomodoroPage } from "@/features/pomodoro"
 import { ProjectDetailPage, ProjectsPage } from "@/features/projects"
 import { OnboardingPage } from "@/features/profile/pages/onboarding-page"
 import { ProfilePage } from "@/features/profile/pages/profile-page"
@@ -47,6 +49,8 @@ export const router = createBrowserRouter([
               { index: true, element: <Navigate to="/dashboard" replace /> },
               { path: "dashboard", element: <DashboardPage /> },
               { path: "tasks", element: <TasksPage /> },
+              { path: "goals", element: <GoalsPage /> },
+              { path: "pomodoro", element: <PomodoroPage /> },
               { path: "projects", element: <ProjectsPage /> },
               {
                 path: "projects/:projectId",

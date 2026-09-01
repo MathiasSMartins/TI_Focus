@@ -5,6 +5,7 @@ import type { AchievementId } from "@/features/achievements/types/achievement"
 export const XP_EVENT_TYPES = [
   "TASK_COMPLETED",
   "ACHIEVEMENT_UNLOCKED",
+  "GOAL_COMPLETED",
 ] as const
 
 export type XpEventType = (typeof XP_EVENT_TYPES)[number]
@@ -32,8 +33,16 @@ export interface AchievementXpTransactionDocument extends XpTransactionBase {
   achievementName: string
 }
 
+export interface GoalXpTransactionDocument extends XpTransactionBase {
+  eventType: "GOAL_COMPLETED"
+  progressId: string
+  cadence: "daily" | "weekly" | "monthly"
+}
+
 export type XpTransactionDocument =
-  TaskXpTransactionDocument | AchievementXpTransactionDocument
+  | TaskXpTransactionDocument
+  | AchievementXpTransactionDocument
+  | GoalXpTransactionDocument
 
 export type XpTransaction = XpTransactionDocument & { id: string }
 

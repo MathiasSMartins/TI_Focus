@@ -4,6 +4,8 @@ import {
   LayoutDashboard,
   Medal,
   Settings,
+  Target,
+  Timer,
   ShieldCheck,
   UserRound,
   X,
@@ -20,6 +22,8 @@ import { cn } from "@/utils/cn"
 const navigation: NavigationItem[] = [
   { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
   { label: "Tarefas", href: "/tasks", icon: CheckSquare2 },
+  { label: "Metas", href: "/goals", icon: Target },
+  { label: "Pomodoro", href: "/pomodoro", icon: Timer },
   { label: "Projetos", href: "/projects", icon: FolderKanban },
   { label: "Conquistas", href: "/achievements", icon: Medal },
   { label: "Perfil", href: "/profile", icon: UserRound },

@@ -8,6 +8,8 @@ import { UserAvatar } from "@/features/profile/components/user-avatar"
 const pageTitles: Record<string, string> = {
   "/dashboard": "Dashboard",
   "/tasks": "Tarefas",
+  "/goals": "Metas",
+  "/pomodoro": "Pomodoro",
   "/projects": "Projetos",
   "/achievements": "Conquistas",
   "/profile": "Perfil",
