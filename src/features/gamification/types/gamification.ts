@@ -1,16 +1,18 @@
 import type { Timestamp } from "firebase/firestore"
 
-export const XP_EVENT_TYPES = ["TASK_COMPLETED"] as const
+import type { AchievementId } from "@/features/achievements/types/achievement"
+
+export const XP_EVENT_TYPES = [
+  "TASK_COMPLETED",
+  "ACHIEVEMENT_UNLOCKED",
+] as const
 
 export type XpEventType = (typeof XP_EVENT_TYPES)[number]
 
-export interface XpTransactionDocument {
+interface XpTransactionBase {
   userId: string
   amount: number
   reason: string
-  eventType: XpEventType
-  taskId: string
-  taskTitle: string
   createdAt: Timestamp
   xpBefore: number
   xpAfter: number
@@ -18,9 +20,22 @@ export interface XpTransactionDocument {
   levelAfter: number
 }
 
-export interface XpTransaction extends XpTransactionDocument {
-  id: string
+export interface TaskXpTransactionDocument extends XpTransactionBase {
+  eventType: "TASK_COMPLETED"
+  taskId: string
+  taskTitle: string
 }
+
+export interface AchievementXpTransactionDocument extends XpTransactionBase {
+  eventType: "ACHIEVEMENT_UNLOCKED"
+  achievementId: AchievementId
+  achievementName: string
+}
+
+export type XpTransactionDocument =
+  TaskXpTransactionDocument | AchievementXpTransactionDocument
+
+export type XpTransaction = XpTransactionDocument & { id: string }
 
 export interface XpAwardResult {
   transactionId: string

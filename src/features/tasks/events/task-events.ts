@@ -11,6 +11,7 @@ export interface TaskCompletedEvent {
   levelAfter?: number
   dailyLimitReached?: boolean
   transactionId?: string
+  alreadyProcessed?: boolean
 }
 
 type TaskCompletedListener = (event: TaskCompletedEvent) => void

@@ -169,6 +169,7 @@ function publishCompletion(
     levelAfter: award.levelAfter,
     dailyLimitReached: award.dailyLimitReached,
     transactionId: award.transactionId,
+    alreadyProcessed: award.alreadyProcessed,
   })
 }
 

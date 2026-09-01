@@ -212,8 +212,130 @@ service cloud.firestore {
       return /databases/$(database)/documents/users/$(userId)/tasks/$(taskId);
     }
 
-    function xpTransactionPath(userId, taskId) {
-      return /databases/$(database)/documents/users/$(userId)/xpTransactions/$(taskId);
+    function xpTransactionPath(userId, transactionId) {
+      return /databases/$(database)/documents/users/$(userId)/xpTransactions/$(transactionId);
+    }
+
+    function projectPath(userId, projectId) {
+      return /databases/$(database)/documents/users/$(userId)/projects/$(projectId);
+    }
+
+    function projectCompletionPath(userId, projectId) {
+      return /databases/$(database)/documents/users/$(userId)/projectCompletions/$(projectId);
+    }
+
+    function achievementStatsPath(userId) {
+      return /databases/$(database)/documents/users/$(userId)/achievementStats/main;
+    }
+
+    function achievementEvidencePath(userId, evidenceId) {
+      return /databases/$(database)/documents/users/$(userId)/achievementEvidence/$(evidenceId);
+    }
+
+    function achievementUnlockPath(userId, achievementId) {
+      return /databases/$(database)/documents/users/$(userId)/achievements/$(achievementId);
+    }
+
+    function achievementTransactionId(achievementId) {
+      return 'achievement__' + achievementId;
+    }
+
+    function isKnownAchievement(achievementId) {
+      return achievementId == 'first-mission'
+        || achievementId == 'tasks-10'
+        || achievementId == 'tasks-50'
+        || achievementId == 'tasks-100'
+        || achievementId == 'first-pomodoro'
+        || achievementId == 'pomodoros-10'
+        || achievementId == 'pomodoros-50'
+        || achievementId == 'streak-7'
+        || achievementId == 'streak-30'
+        || achievementId == 'perfect-week'
+        || achievementId == 'first-project'
+        || achievementId == 'projects-10';
+    }
+
+    function isAchievementSourceAvailable(achievementId) {
+      return achievementId == 'first-mission'
+        || achievementId == 'tasks-10'
+        || achievementId == 'tasks-50'
+        || achievementId == 'tasks-100'
+        || achievementId == 'first-project'
+        || achievementId == 'projects-10';
+    }
+
+    function achievementMetric(achievementId) {
+      return achievementId == 'first-mission'
+          || achievementId == 'tasks-10'
+          || achievementId == 'tasks-50'
+          || achievementId == 'tasks-100' ? 'tasksCompleted'
+        : achievementId == 'first-pomodoro'
+          || achievementId == 'pomodoros-10'
+          || achievementId == 'pomodoros-50' ? 'pomodorosCompleted'
+        : achievementId == 'streak-7'
+          || achievementId == 'streak-30' ? 'bestStreak'
+        : achievementId == 'perfect-week' ? 'perfectWeeks'
+        : achievementId == 'first-project'
+          || achievementId == 'projects-10' ? 'projectsCompleted'
+        : 'invalid';
+    }
+
+    function achievementTarget(achievementId) {
+      return achievementId == 'first-mission' ? 1
+        : achievementId == 'tasks-10' ? 10
+        : achievementId == 'tasks-50' ? 50
+        : achievementId == 'tasks-100' ? 100
+        : achievementId == 'first-pomodoro' ? 1
+        : achievementId == 'pomodoros-10' ? 10
+        : achievementId == 'pomodoros-50' ? 50
+        : achievementId == 'streak-7' ? 7
+        : achievementId == 'streak-30' ? 30
+        : achievementId == 'perfect-week' ? 1
+        : achievementId == 'first-project' ? 1
+        : achievementId == 'projects-10' ? 10
+        : -1;
+    }
+
+    function achievementXp(achievementId) {
+      return achievementId == 'first-mission' ? 25
+        : achievementId == 'tasks-10' ? 50
+        : achievementId == 'tasks-50' ? 150
+        : achievementId == 'tasks-100' ? 300
+        : achievementId == 'first-pomodoro' ? 25
+        : achievementId == 'pomodoros-10' ? 50
+        : achievementId == 'pomodoros-50' ? 150
+        : achievementId == 'streak-7' ? 100
+        : achievementId == 'streak-30' ? 400
+        : achievementId == 'perfect-week' ? 200
+        : achievementId == 'first-project' ? 75
+        : achievementId == 'projects-10' ? 300
+        : -1;
+    }
+
+    function achievementName(achievementId) {
+      return achievementId == 'first-mission' ? 'Primeira Missão'
+        : achievementId == 'tasks-10' ? '10 tarefas concluídas'
+        : achievementId == 'tasks-50' ? '50 tarefas concluídas'
+        : achievementId == 'tasks-100' ? '100 tarefas concluídas'
+        : achievementId == 'first-pomodoro' ? 'Primeiro Pomodoro'
+        : achievementId == 'pomodoros-10' ? '10 Pomodoros'
+        : achievementId == 'pomodoros-50' ? '50 Pomodoros'
+        : achievementId == 'streak-7' ? '7 dias de streak'
+        : achievementId == 'streak-30' ? '30 dias de streak'
+        : achievementId == 'perfect-week' ? 'Semana Perfeita'
+        : achievementId == 'first-project' ? 'Primeiro projeto concluído'
+        : achievementId == 'projects-10' ? '10 projetos concluídos'
+        : '';
+    }
+
+    function achievementProgress(stats, achievementId) {
+      let metric = achievementMetric(achievementId);
+      return metric == 'tasksCompleted' ? stats.tasksCompleted
+        : metric == 'pomodorosCompleted' ? stats.pomodorosCompleted
+        : metric == 'bestStreak' ? stats.bestStreak
+        : metric == 'perfectWeeks' ? stats.perfectWeeks
+        : metric == 'projectsCompleted' ? stats.projectsCompleted
+        : -1;
     }
 
     function isXpWindowExpired(profile) {
@@ -221,13 +343,16 @@ service cloud.firestore {
         || request.time >= profile.xpWindowStartedAt + duration.value(24, 'h');
     }
 
-    function expectedXpTransactionAmount(userId, priority) {
-      let profile = get(profilePath(userId)).data;
-      let reward = taskXpForPriority(priority);
+    function expectedXpAmountForReward(profile, reward) {
       return !isXpWindowExpired(profile)
           && profile.xpWindowAmount + reward > 1000
         ? 0
         : reward;
+    }
+
+    function expectedXpTransactionAmount(userId, priority) {
+      let profile = get(profilePath(userId)).data;
+      return expectedXpAmountForReward(profile, taskXpForPriority(priority));
     }
 
     function hasXpTransactionAfter(userId, taskId) {
@@ -511,6 +636,14 @@ service cloud.firestore {
         ]);
     }
 
+    function hasValidXpProfileTransactionIdentity(transactionId, xpTransaction) {
+      return (xpTransaction.eventType == 'TASK_COMPLETED'
+          && xpTransaction.taskId == transactionId)
+        || (xpTransaction.eventType == 'ACHIEVEMENT_UNLOCKED'
+          && transactionId
+            == achievementTransactionId(xpTransaction.achievementId));
+    }
+
     function hasValidXpProfileUpdate(userId) {
       let before = resource.data;
       let after = request.resource.data;
@@ -524,8 +657,10 @@ service cloud.firestore {
         && !exists(transactionPath)
         && existsAfter(transactionPath)
         && xpTransaction.userId == userId
-        && xpTransaction.taskId == transactionId
-        && xpTransaction.eventType == 'TASK_COMPLETED'
+        && hasValidXpProfileTransactionIdentity(
+          transactionId,
+          xpTransaction
+        )
         && xpTransaction.amount > 0
         && after.xp == before.xp + xpTransaction.amount
         && after.level == xpTransaction.levelAfter
@@ -548,7 +683,7 @@ service cloud.firestore {
         ]);
     }
 
-    function hasValidXpTransactionCreate(userId, transactionId) {
+    function hasValidTaskXpTransactionCreate(userId, transactionId) {
       let data = request.resource.data;
       let taskReference = taskPath(userId, transactionId);
       let userProfilePath = profilePath(userId);
@@ -617,6 +752,324 @@ service cloud.firestore {
             && profileAfter.level == data.levelAfter));
     }
 
+    function hasProjectCompletionAfter(userId, projectId) {
+      let completionPath = projectCompletionPath(userId, projectId);
+      let completion = getAfter(completionPath).data;
+      return existsAfter(completionPath)
+        && completion.userId == userId
+        && completion.projectId == projectId
+        && completion.completedAt is timestamp;
+    }
+
+    function hasValidProjectCompletionCreate(userId, projectId) {
+      let data = request.resource.data;
+      let sourcePath = projectPath(userId, projectId);
+      let projectAfter = getAfter(sourcePath).data;
+      return data.keys().hasOnly([
+          'userId',
+          'projectId',
+          'projectName',
+          'completedAt'
+        ])
+        && data.keys().hasAll([
+          'userId',
+          'projectId',
+          'projectName',
+          'completedAt'
+        ])
+        && data.userId == userId
+        && data.projectId == projectId
+        && data.projectName is string
+        && data.projectName == projectAfter.name
+        && data.completedAt == projectAfter.updatedAt
+        && existsAfter(sourcePath)
+        && projectAfter.status == 'completed';
+    }
+
+    function hasValidAchievementStatsShape(data) {
+      return data.keys().hasOnly([
+          'tasksCompleted',
+          'pomodorosCompleted',
+          'bestStreak',
+          'perfectWeeks',
+          'projectsCompleted',
+          'lastEvidenceId',
+          'updatedAt'
+        ])
+        && data.keys().hasAll([
+          'tasksCompleted',
+          'pomodorosCompleted',
+          'bestStreak',
+          'perfectWeeks',
+          'projectsCompleted',
+          'lastEvidenceId',
+          'updatedAt'
+        ])
+        && data.tasksCompleted is int
+        && data.tasksCompleted >= 0
+        && data.tasksCompleted <= 1000000000
+        && data.pomodorosCompleted is int
+        && data.pomodorosCompleted >= 0
+        && data.pomodorosCompleted <= 1000000000
+        && data.bestStreak is int
+        && data.bestStreak >= 0
+        && data.bestStreak <= 1000000000
+        && data.perfectWeeks is int
+        && data.perfectWeeks >= 0
+        && data.perfectWeeks <= 1000000000
+        && data.projectsCompleted is int
+        && data.projectsCompleted >= 0
+        && data.projectsCompleted <= 1000000000
+        && (data.lastEvidenceId == null
+          || (data.lastEvidenceId is string
+            && data.lastEvidenceId.size() > 0
+            && data.lastEvidenceId.size() <= 192
+            && !data.lastEvidenceId.matches('.*[/].*')))
+        && data.updatedAt is timestamp;
+    }
+
+    function hasExactlyOneAchievementIncrement(before, after, evidence) {
+      return (evidence.metric == 'tasksCompleted'
+          && after.tasksCompleted == before.tasksCompleted + 1
+          && after.pomodorosCompleted == before.pomodorosCompleted
+          && after.bestStreak == before.bestStreak
+          && after.perfectWeeks == before.perfectWeeks
+          && after.projectsCompleted == before.projectsCompleted)
+        || (evidence.metric == 'pomodorosCompleted'
+          && after.tasksCompleted == before.tasksCompleted
+          && after.pomodorosCompleted == before.pomodorosCompleted + 1
+          && after.bestStreak == before.bestStreak
+          && after.perfectWeeks == before.perfectWeeks
+          && after.projectsCompleted == before.projectsCompleted)
+        || (evidence.metric == 'bestStreak'
+          && after.tasksCompleted == before.tasksCompleted
+          && after.pomodorosCompleted == before.pomodorosCompleted
+          && after.bestStreak == before.bestStreak + 1
+          && after.perfectWeeks == before.perfectWeeks
+          && after.projectsCompleted == before.projectsCompleted)
+        || (evidence.metric == 'perfectWeeks'
+          && after.tasksCompleted == before.tasksCompleted
+          && after.pomodorosCompleted == before.pomodorosCompleted
+          && after.bestStreak == before.bestStreak
+          && after.perfectWeeks == before.perfectWeeks + 1
+          && after.projectsCompleted == before.projectsCompleted)
+        || (evidence.metric == 'projectsCompleted'
+          && after.tasksCompleted == before.tasksCompleted
+          && after.pomodorosCompleted == before.pomodorosCompleted
+          && after.bestStreak == before.bestStreak
+          && after.perfectWeeks == before.perfectWeeks
+          && after.projectsCompleted == before.projectsCompleted + 1);
+    }
+
+    function hasValidAchievementStatsCreate(statsId) {
+      let data = request.resource.data;
+      return statsId == 'main'
+        && hasValidAchievementStatsShape(data)
+        && data.tasksCompleted == 0
+        && data.pomodorosCompleted == 0
+        && data.bestStreak == 0
+        && data.perfectWeeks == 0
+        && data.projectsCompleted == 0
+        && data.lastEvidenceId == null
+        && data.updatedAt == request.time;
+    }
+
+    function hasValidAchievementStatsUpdate(userId, statsId) {
+      let before = resource.data;
+      let after = request.resource.data;
+      let evidenceId = after.lastEvidenceId;
+      let evidencePath = achievementEvidencePath(userId, evidenceId);
+      let evidence = getAfter(evidencePath).data;
+      return statsId == 'main'
+        && hasValidAchievementStatsShape(after)
+        && evidenceId is string
+        && evidenceId != before.lastEvidenceId
+        && !exists(evidencePath)
+        && existsAfter(evidencePath)
+        && evidence.recordedAt == request.time
+        && after.updatedAt == request.time
+        && hasExactlyOneAchievementIncrement(before, after, evidence);
+    }
+
+    function hasMatchingStatsIncrementForEvidence(userId, evidenceId, data) {
+      let statsPath = achievementStatsPath(userId);
+      let before = get(statsPath).data;
+      let after = getAfter(statsPath).data;
+      return exists(statsPath)
+        && existsAfter(statsPath)
+        && after.lastEvidenceId == evidenceId
+        && after.updatedAt == request.time
+        && hasExactlyOneAchievementIncrement(before, after, data);
+    }
+
+    function hasValidTaskAchievementEvidence(userId, evidenceId, data) {
+      let sourcePath = xpTransactionPath(userId, data.sourceId);
+      let source = get(sourcePath).data;
+      return data.sourceType == 'TASK_COMPLETED'
+        && data.metric == 'tasksCompleted'
+        && evidenceId == 'task_completed__' + data.sourceId
+        && exists(sourcePath)
+        && source.eventType == 'TASK_COMPLETED'
+        && source.taskId == data.sourceId
+        && source.createdAt == data.occurredAt;
+    }
+
+    function hasValidProjectAchievementEvidence(userId, evidenceId, data) {
+      let sourcePath = projectCompletionPath(userId, data.sourceId);
+      let source = get(sourcePath).data;
+      return data.sourceType == 'PROJECT_COMPLETED'
+        && data.metric == 'projectsCompleted'
+        && evidenceId == 'project_completed__' + data.sourceId
+        && exists(sourcePath)
+        && source.userId == userId
+        && source.projectId == data.sourceId
+        && source.completedAt == data.occurredAt;
+    }
+
+    function hasValidAchievementEvidenceCreate(userId, evidenceId) {
+      let data = request.resource.data;
+      return data.keys().hasOnly([
+          'metric',
+          'sourceType',
+          'sourceId',
+          'occurredAt',
+          'recordedAt'
+        ])
+        && data.keys().hasAll([
+          'metric',
+          'sourceType',
+          'sourceId',
+          'occurredAt',
+          'recordedAt'
+        ])
+        && data.sourceId is string
+        && data.sourceId.size() > 0
+        && data.sourceId.size() <= 128
+        && !data.sourceId.matches('.*[/].*')
+        && data.occurredAt is timestamp
+        && data.recordedAt == request.time
+        && (hasValidTaskAchievementEvidence(userId, evidenceId, data)
+          || hasValidProjectAchievementEvidence(userId, evidenceId, data))
+        && hasMatchingStatsIncrementForEvidence(userId, evidenceId, data);
+    }
+
+    function hasValidAchievementUnlockCreate(userId, achievementId) {
+      let data = request.resource.data;
+      let statsPath = achievementStatsPath(userId);
+      let stats = get(statsPath).data;
+      let transactionPath = xpTransactionPath(
+        userId,
+        achievementTransactionId(achievementId)
+      );
+      let xpTransaction = getAfter(transactionPath).data;
+      let progress = achievementProgress(stats, achievementId);
+      return data.keys().hasOnly([
+          'achievementId',
+          'unlockedAt',
+          'progressValue',
+          'rewardXp',
+          'awardedXp',
+          'triggerEvidenceId',
+          'definitionVersion'
+        ])
+        && data.keys().hasAll([
+          'achievementId',
+          'unlockedAt',
+          'progressValue',
+          'rewardXp',
+          'awardedXp',
+          'triggerEvidenceId',
+          'definitionVersion'
+        ])
+        && isKnownAchievement(achievementId)
+        && isAchievementSourceAvailable(achievementId)
+        && data.achievementId == achievementId
+        && data.unlockedAt == request.time
+        && data.progressValue == progress
+        && data.progressValue >= achievementTarget(achievementId)
+        && data.rewardXp == achievementXp(achievementId)
+        && data.awardedXp == xpTransaction.amount
+        && data.triggerEvidenceId == stats.lastEvidenceId
+        && data.triggerEvidenceId is string
+        && data.definitionVersion == 1
+        && exists(statsPath)
+        && !exists(transactionPath)
+        && existsAfter(transactionPath)
+        && xpTransaction.eventType == 'ACHIEVEMENT_UNLOCKED'
+        && xpTransaction.achievementId == achievementId;
+    }
+
+    function hasValidAchievementXpTransactionCreate(userId, transactionId) {
+      let data = request.resource.data;
+      let achievementId = data.achievementId;
+      let unlockPath = achievementUnlockPath(userId, achievementId);
+      let unlock = getAfter(unlockPath).data;
+      let userProfilePath = profilePath(userId);
+      let profileBefore = get(userProfilePath).data;
+      let profileAfter = getAfter(userProfilePath).data;
+      let expectedAmount = expectedXpAmountForReward(
+        profileBefore,
+        achievementXp(achievementId)
+      );
+      return data.keys().hasOnly([
+          'userId',
+          'amount',
+          'reason',
+          'eventType',
+          'achievementId',
+          'achievementName',
+          'createdAt',
+          'xpBefore',
+          'xpAfter',
+          'levelBefore',
+          'levelAfter'
+        ])
+        && data.keys().hasAll([
+          'userId',
+          'amount',
+          'reason',
+          'eventType',
+          'achievementId',
+          'achievementName',
+          'createdAt',
+          'xpBefore',
+          'xpAfter',
+          'levelBefore',
+          'levelAfter'
+        ])
+        && isKnownAchievement(achievementId)
+        && isAchievementSourceAvailable(achievementId)
+        && transactionId == achievementTransactionId(achievementId)
+        && data.userId == userId
+        && data.eventType == 'ACHIEVEMENT_UNLOCKED'
+        && data.achievementName == achievementName(achievementId)
+        && data.amount == expectedAmount
+        && data.reason == (expectedAmount == 0
+          ? 'Limite diário de XP atingido'
+          : 'Conquista desbloqueada')
+        && data.createdAt == request.time
+        && data.xpBefore == profileBefore.xp
+        && data.xpAfter == profileBefore.xp + expectedAmount
+        && data.levelBefore == profileBefore.level
+        && data.levelAfter == profileAfter.level
+        && profileAfter.xp == data.xpAfter
+        && isValidLevelForXp(data.levelAfter, data.xpAfter)
+        && !exists(unlockPath)
+        && existsAfter(unlockPath)
+        && unlock.achievementId == achievementId
+        && unlock.rewardXp == achievementXp(achievementId)
+        && unlock.awardedXp == expectedAmount
+        && (expectedAmount == 0
+          ? (profileAfter.level == profileBefore.level
+            && profileAfter.lastXpTransactionId
+              == profileBefore.lastXpTransactionId
+            && profileAfter.xpWindowStartedAt
+              == profileBefore.xpWindowStartedAt
+            && profileAfter.xpWindowAmount
+              == profileBefore.xpWindowAmount)
+          : profileAfter.lastXpTransactionId == transactionId);
+    }
+
     match /users/{userId} {
       allow get: if isOwner(userId);
       allow list: if false;
@@ -658,7 +1111,9 @@ service cloud.firestore {
           && request.resource.data.updatedAt == request.time
           && (request.resource.data.status == 'archived'
             ? request.resource.data.archivedAt == request.time
-            : request.resource.data.archivedAt == null);
+            : request.resource.data.archivedAt == null)
+          && (request.resource.data.status != 'completed'
+            || hasProjectCompletionAfter(userId, projectId));
 
         allow update: if isOwner(userId)
           && resource.data.deletedAt == null
@@ -667,6 +1122,9 @@ service cloud.firestore {
           && request.resource.data.updatedAt == request.time
           && hasValidProjectArchiveTransition()
           && hasValidProjectDeletionTransition()
+          && (!(resource.data.status != 'completed'
+              && request.resource.data.status == 'completed')
+            || hasProjectCompletionAfter(userId, projectId))
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
             'name',
             'description',
@@ -680,6 +1138,45 @@ service cloud.firestore {
           ]);
 
         allow delete: if false;
+      }
+
+      match /projectCompletions/{projectId} {
+        allow get, list: if isOwner(userId);
+
+        allow create: if isOwner(userId)
+          && hasValidProjectCompletionCreate(userId, projectId);
+
+        allow update, delete: if false;
+      }
+
+      match /achievementStats/{statsId} {
+        allow get, list: if isOwner(userId);
+
+        allow create: if isOwner(userId)
+          && hasValidAchievementStatsCreate(statsId);
+
+        allow update: if isOwner(userId)
+          && hasValidAchievementStatsUpdate(userId, statsId);
+
+        allow delete: if false;
+      }
+
+      match /achievementEvidence/{evidenceId} {
+        allow get, list: if isOwner(userId);
+
+        allow create: if isOwner(userId)
+          && hasValidAchievementEvidenceCreate(userId, evidenceId);
+
+        allow update, delete: if false;
+      }
+
+      match /achievements/{achievementId} {
+        allow get, list: if isOwner(userId);
+
+        allow create: if isOwner(userId)
+          && hasValidAchievementUnlockCreate(userId, achievementId);
+
+        allow update, delete: if false;
       }
 
       match /tasks/{taskId} {
@@ -740,7 +1237,11 @@ service cloud.firestore {
         allow get, list: if isOwner(userId);
 
         allow create: if isOwner(userId)
-          && hasValidXpTransactionCreate(userId, transactionId);
+          && (hasValidTaskXpTransactionCreate(userId, transactionId)
+            || hasValidAchievementXpTransactionCreate(
+              userId,
+              transactionId
+            ));
 
         allow update, delete: if false;
       }

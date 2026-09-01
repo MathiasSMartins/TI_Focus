@@ -30,6 +30,13 @@ export interface ProjectDocument {
   deletedAt: Timestamp | null
 }
 
+export interface ProjectCompletionDocument {
+  userId: string
+  projectId: string
+  projectName: string
+  completedAt: Timestamp
+}
+
 export interface Project extends ProjectDocument {
   id: string
 }

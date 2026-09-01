@@ -1,6 +1,7 @@
 import { Navigate, createBrowserRouter } from "react-router-dom"
 
 import { MainLayout } from "@/components/layout/main-layout"
+import { AchievementsPage } from "@/features/achievements"
 import {
   AuthLayout,
   ForgotPasswordPage,
@@ -51,6 +52,7 @@ export const router = createBrowserRouter([
                 path: "projects/:projectId",
                 element: <ProjectDetailPage />,
               },
+              { path: "achievements", element: <AchievementsPage /> },
               { path: "profile", element: <ProfilePage /> },
               { path: "settings", element: <SettingsPage /> },
               { path: "*", element: <NotFoundPage /> },

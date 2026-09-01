@@ -16,6 +16,10 @@ import {
 } from "firebase/firestore"
 
 import {
+  PROJECT_COMPLETED,
+  publishProjectCompleted,
+} from "@/features/projects/events/project-events"
+import {
   MAX_PROJECT_CATEGORY_LENGTH,
   MAX_PROJECT_DESCRIPTION_LENGTH,
   MAX_PROJECT_INVESTED_MINUTES,
@@ -23,6 +27,7 @@ import {
   PROJECT_STATUSES,
   type CreateProjectInput,
   type Project,
+  type ProjectCompletionDocument,
   type ProjectDocument,
   type ProjectStatus,
   type UpdateProjectInput,
@@ -50,6 +55,16 @@ function getProjectReference(uid: string, projectId: string) {
     getProjectCollection(uid),
     projectId,
   ) as DocumentReference<ProjectDocument>
+}
+
+function getProjectCompletionReference(uid: string, projectId: string) {
+  return doc(
+    getFirestoreInstance(),
+    "users",
+    uid,
+    "projectCompletions",
+    projectId,
+  ) as DocumentReference<ProjectCompletionDocument>
 }
 
 function normalizeName(name: string) {
@@ -101,8 +116,9 @@ function normalizeInvestedMinutes(value: number | undefined) {
 export async function createProject(uid: string, input: CreateProjectInput) {
   const reference = doc(getProjectCollection(uid))
   const status = normalizeStatus(input.status)
+  const name = normalizeName(input.name)
   const project: WithFieldValue<ProjectDocument> = {
-    name: normalizeName(input.name),
+    name,
     description: normalizeOptionalText(
       input.description,
       MAX_PROJECT_DESCRIPTION_LENGTH,
@@ -120,7 +136,31 @@ export async function createProject(uid: string, input: CreateProjectInput) {
     deletedAt: null,
   }
 
-  await setDoc(reference, project)
+  if (status !== "completed") {
+    await setDoc(reference, project)
+    return reference.id
+  }
+
+  const completionReference = getProjectCompletionReference(uid, reference.id)
+  await runTransaction(getFirestoreInstance(), async (transaction) => {
+    const completionSnapshot = await transaction.get(completionReference)
+    transaction.set(reference, project)
+    if (!completionSnapshot.exists()) {
+      transaction.set(completionReference, {
+        userId: uid,
+        projectId: reference.id,
+        projectName: name,
+        completedAt: serverTimestamp(),
+      })
+    }
+  })
+  publishProjectCompleted({
+    type: PROJECT_COMPLETED,
+    version: 1,
+    userId: uid,
+    projectId: reference.id,
+    firstCompletion: true,
+  })
   return reference.id
 }
 
@@ -129,50 +169,90 @@ export async function updateProject(
   projectId: string,
   input: UpdateProjectInput,
 ) {
-  await runTransaction(getFirestoreInstance(), async (transaction) => {
-    const reference = getProjectReference(uid, projectId)
-    const snapshot = await transaction.get(reference)
-    if (!snapshot.exists()) throw new Error("Projeto não encontrado.")
+  const completion = await runTransaction(
+    getFirestoreInstance(),
+    async (transaction) => {
+      const reference = getProjectReference(uid, projectId)
+      const snapshot = await transaction.get(reference)
+      if (!snapshot.exists()) throw new Error("Projeto não encontrado.")
 
-    const current = snapshot.data()
-    if (current.deletedAt) throw new Error("Projeto não encontrado.")
-    const nextStatus = normalizeStatus(input.status ?? current.status)
-    const updates: Record<string, unknown> = {
-      status: nextStatus,
-      updatedAt: serverTimestamp(),
-    }
+      const current = snapshot.data()
+      if (current.deletedAt) throw new Error("Projeto não encontrado.")
+      const nextStatus = normalizeStatus(input.status ?? current.status)
+      const updates: Record<string, unknown> = {
+        status: nextStatus,
+        updatedAt: serverTimestamp(),
+      }
 
-    if (Object.hasOwn(input, "name")) {
-      updates.name = normalizeName(input.name ?? "")
-    }
-    if (Object.hasOwn(input, "description")) {
-      updates.description = normalizeOptionalText(
-        input.description,
-        MAX_PROJECT_DESCRIPTION_LENGTH,
+      if (Object.hasOwn(input, "name")) {
+        updates.name = normalizeName(input.name ?? "")
+      }
+      if (Object.hasOwn(input, "description")) {
+        updates.description = normalizeOptionalText(
+          input.description,
+          MAX_PROJECT_DESCRIPTION_LENGTH,
+        )
+      }
+      if (Object.hasOwn(input, "dueDate")) {
+        updates.dueAt = normalizeDueDate(input.dueDate)
+      }
+      if (Object.hasOwn(input, "category")) {
+        updates.category = normalizeOptionalText(
+          input.category,
+          MAX_PROJECT_CATEGORY_LENGTH,
+        )
+      }
+      if (Object.hasOwn(input, "investedMinutes")) {
+        updates.investedMinutes = normalizeInvestedMinutes(
+          input.investedMinutes,
+        )
+      }
+
+      if (nextStatus === "archived") {
+        updates.archivedAt =
+          current.status === "archived" ? current.archivedAt : serverTimestamp()
+      } else {
+        updates.archivedAt = null
+      }
+
+      const transitionedToCompleted =
+        current.status !== "completed" && nextStatus === "completed"
+      const completionReference = transitionedToCompleted
+        ? getProjectCompletionReference(uid, projectId)
+        : null
+      const completionSnapshot = completionReference
+        ? await transaction.get(completionReference)
+        : null
+
+      const firstCompletion = Boolean(
+        transitionedToCompleted &&
+        completionReference &&
+        !completionSnapshot?.exists(),
       )
-    }
-    if (Object.hasOwn(input, "dueDate")) {
-      updates.dueAt = normalizeDueDate(input.dueDate)
-    }
-    if (Object.hasOwn(input, "category")) {
-      updates.category = normalizeOptionalText(
-        input.category,
-        MAX_PROJECT_CATEGORY_LENGTH,
-      )
-    }
-    if (Object.hasOwn(input, "investedMinutes")) {
-      updates.investedMinutes = normalizeInvestedMinutes(input.investedMinutes)
-    }
 
-    if (nextStatus === "archived") {
-      updates.archivedAt =
-        current.status === "archived" ? current.archivedAt : serverTimestamp()
-    } else {
-      updates.archivedAt = null
-    }
+      transaction.update(reference, updates)
+      if (firstCompletion && completionReference) {
+        transaction.set(completionReference, {
+          userId: uid,
+          projectId,
+          projectName:
+            typeof updates.name === "string" ? updates.name : current.name,
+          completedAt: serverTimestamp(),
+        })
+      }
+      return { transitionedToCompleted, firstCompletion }
+    },
+  )
 
-    transaction.update(reference, updates)
-  })
+  if (completion.transitionedToCompleted) {
+    publishProjectCompleted({
+      type: PROJECT_COMPLETED,
+      version: 1,
+      userId: uid,
+      projectId,
+      firstCompletion: completion.firstCompletion,
+    })
+  }
 }
 
 export function archiveProject(uid: string, projectId: string) {

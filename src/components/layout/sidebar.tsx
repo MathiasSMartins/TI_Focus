@@ -2,6 +2,7 @@ import {
   CheckSquare2,
   FolderKanban,
   LayoutDashboard,
+  Medal,
   Settings,
   ShieldCheck,
   UserRound,
@@ -20,6 +21,7 @@ const navigation: NavigationItem[] = [
   { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
   { label: "Tarefas", href: "/tasks", icon: CheckSquare2 },
   { label: "Projetos", href: "/projects", icon: FolderKanban },
+  { label: "Conquistas", href: "/achievements", icon: Medal },
   { label: "Perfil", href: "/profile", icon: UserRound },
   { label: "Configurações", href: "/settings", icon: Settings },
 ]

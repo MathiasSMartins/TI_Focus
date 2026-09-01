@@ -169,7 +169,9 @@ export function DashboardPage() {
                 >
                   <div className="min-w-0">
                     <p className="truncate text-sm font-medium">
-                      {transaction.taskTitle}
+                      {transaction.eventType === "TASK_COMPLETED"
+                        ? transaction.taskTitle
+                        : transaction.achievementName}
                     </p>
                     <p className="mt-1 text-xs text-muted-foreground">
                       {transaction.reason} ·{" "}
