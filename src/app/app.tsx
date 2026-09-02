@@ -5,6 +5,7 @@ import { AchievementsProvider } from "@/features/achievements"
 import { AuthProvider } from "@/features/auth"
 import { GamificationProvider } from "@/features/gamification"
 import { GoalsProvider } from "@/features/goals"
+import { NotificationsProvider } from "@/features/notifications"
 import { PomodoroProvider } from "@/features/pomodoro"
 
 export function App() {
@@ -14,7 +15,9 @@ export function App() {
         <GoalsProvider>
           <GamificationProvider>
             <AchievementsProvider>
-              <RouterProvider router={router} />
+              <NotificationsProvider>
+                <RouterProvider router={router} />
+              </NotificationsProvider>
             </AchievementsProvider>
           </GamificationProvider>
         </GoalsProvider>

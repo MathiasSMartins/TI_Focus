@@ -55,6 +55,41 @@ service cloud.firestore {
         ].toSet()).size() == 0;
     }
 
+    function hasValidNotificationTypes(types) {
+      return types is map
+        && types.keys().hasOnly([
+          'pomodoro_completed',
+          'break_completed',
+          'goal_near_end',
+          'goal_completed',
+          'achievement_unlocked',
+          'level_up',
+          'streak_at_risk',
+          'task_due_soon',
+          'task_overdue'
+        ])
+        && types.keys().hasAll([
+          'pomodoro_completed',
+          'break_completed',
+          'goal_near_end',
+          'goal_completed',
+          'achievement_unlocked',
+          'level_up',
+          'streak_at_risk',
+          'task_due_soon',
+          'task_overdue'
+        ])
+        && types.pomodoro_completed is bool
+        && types.break_completed is bool
+        && types.goal_near_end is bool
+        && types.goal_completed is bool
+        && types.achievement_unlocked is bool
+        && types.level_up is bool
+        && types.streak_at_risk is bool
+        && types.task_due_soon is bool
+        && types.task_overdue is bool;
+    }
+
     function hasValidSettings(settings) {
       return settings is map
         && settings.keys().hasOnly([
@@ -93,9 +128,129 @@ service cloud.firestore {
         && settings.pomodoro.cyclesBeforeLongBreak >= 1
         && settings.pomodoro.cyclesBeforeLongBreak <= 12
         && settings.notifications is map
-        && settings.notifications.keys().hasOnly(['inApp', 'push'])
+        && settings.notifications.keys().hasOnly(['inApp', 'push', 'types'])
+        && settings.notifications.keys().hasAll(['inApp', 'push'])
         && settings.notifications.inApp is bool
-        && settings.notifications.push is bool;
+        && settings.notifications.push is bool
+        && (!settings.notifications.keys().hasAny(['types'])
+          || hasValidNotificationTypes(settings.notifications.types));
+    }
+
+    function isValidNotificationType(type) {
+      return type == 'pomodoro_completed'
+        || type == 'break_completed'
+        || type == 'goal_near_end'
+        || type == 'goal_completed'
+        || type == 'achievement_unlocked'
+        || type == 'level_up'
+        || type == 'streak_at_risk'
+        || type == 'task_due_soon'
+        || type == 'task_overdue';
+    }
+
+    function hasValidNotificationCreate(notificationId) {
+      let data = request.resource.data;
+      return data.keys().hasOnly([
+          'type',
+          'title',
+          'body',
+          'href',
+          'sourceId',
+          'showInApp',
+          'showBrowser',
+          'occurredAt',
+          'createdAt',
+          'readAt',
+          'browserDeliveredAt'
+        ])
+        && data.keys().hasAll([
+          'type',
+          'title',
+          'body',
+          'href',
+          'sourceId',
+          'showInApp',
+          'showBrowser',
+          'occurredAt',
+          'createdAt',
+          'readAt',
+          'browserDeliveredAt'
+        ])
+        && notificationId is string
+        && notificationId.size() > 0
+        && notificationId.size() <= 256
+        && !notificationId.matches('.*[/].*')
+        && isValidNotificationType(data.type)
+        && notificationId.matches(data.type + '__.+')
+        && data.title is string
+        && data.title.size() > 0
+        && data.title.size() <= 120
+        && data.body is string
+        && data.body.size() > 0
+        && data.body.size() <= 320
+        && (data.href == '/dashboard'
+          || data.href == '/tasks'
+          || data.href == '/goals'
+          || data.href == '/pomodoro'
+          || data.href == '/achievements')
+        && data.sourceId is string
+        && data.sourceId.size() > 0
+        && data.sourceId.size() <= 224
+        && !data.sourceId.matches('.*[/].*')
+        && data.showInApp is bool
+        && data.showBrowser is bool
+        && data.occurredAt is timestamp
+        && data.occurredAt <= request.time + duration.value(10, 'm')
+        && data.createdAt == request.time
+        && data.readAt == null
+        && data.browserDeliveredAt == null;
+    }
+
+    function hasValidNotificationUpdate() {
+      let before = resource.data;
+      let after = request.resource.data;
+      return after.diff(before).affectedKeys().hasOnly([
+          'readAt',
+          'browserDeliveredAt'
+        ])
+        && (after.readAt == before.readAt
+          || (before.readAt == null && after.readAt == request.time))
+        && (after.browserDeliveredAt == before.browserDeliveredAt
+          || (before.browserDeliveredAt == null
+            && after.browserDeliveredAt == request.time)
+          || (before.browserDeliveredAt is timestamp
+            && after.browserDeliveredAt == null));
+    }
+
+    function hasValidBrowserRateStateShape(data) {
+      return data.keys().hasOnly(['windowStartedAt', 'count'])
+        && data.keys().hasAll(['windowStartedAt', 'count'])
+        && data.windowStartedAt is timestamp
+        && data.windowStartedAt <= request.time
+        && data.count is int
+        && data.count >= 0
+        && data.count <= 3;
+    }
+
+    function hasValidBrowserRateStateCreate(stateId) {
+      let data = request.resource.data;
+      return stateId == 'browserRate'
+        && hasValidBrowserRateStateShape(data)
+        && data.windowStartedAt == request.time
+        && data.count == 1;
+    }
+
+    function hasValidBrowserRateStateUpdate(stateId) {
+      let before = resource.data;
+      let after = request.resource.data;
+      return stateId == 'browserRate'
+        && hasValidBrowserRateStateShape(after)
+        && ((after.windowStartedAt == before.windowStartedAt
+            && (after.count == before.count + 1
+              || after.count == before.count - 1))
+          || (request.time >= before.windowStartedAt + duration.value(5, 'm')
+            && after.windowStartedAt == request.time
+            && after.count == 1));
     }
 
     function isValidProjectStatus(status) {
@@ -2437,6 +2592,30 @@ service cloud.firestore {
           ]);
 
         allow delete: if isOwner(userId);
+      }
+
+      match /notifications/{notificationId} {
+        allow get, list: if isOwner(userId);
+
+        allow create: if isOwner(userId)
+          && hasValidNotificationCreate(notificationId);
+
+        allow update: if isOwner(userId)
+          && hasValidNotificationUpdate();
+
+        allow delete: if false;
+      }
+
+      match /notificationState/{stateId} {
+        allow get: if isOwner(userId);
+
+        allow create: if isOwner(userId)
+          && hasValidBrowserRateStateCreate(stateId);
+
+        allow update: if isOwner(userId)
+          && hasValidBrowserRateStateUpdate(stateId);
+
+        allow list, delete: if false;
       }
 
       match /gamificationMeta/clock {

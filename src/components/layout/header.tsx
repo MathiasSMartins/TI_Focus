@@ -4,6 +4,7 @@ import { useLocation } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { getITAreaConfig } from "@/config/it-area-config"
 import { useAuth } from "@/features/auth"
+import { useNotifications } from "@/features/notifications"
 import { UserAvatar } from "@/features/profile/components/user-avatar"
 
 const pageTitles: Record<string, string> = {
@@ -24,6 +25,7 @@ interface HeaderProps {
 export function Header({ onOpenNavigation }: HeaderProps) {
   const { pathname } = useLocation()
   const { user, profile, logout, isSubmitting } = useAuth()
+  const { unreadCount, openCenter } = useNotifications()
   const areaConfig = getITAreaConfig(profile?.primaryArea)
   const personalizedPageTitles: Record<string, string> = {
     ...pageTitles,
@@ -79,15 +81,24 @@ export function Header({ onOpenNavigation }: HeaderProps) {
               title="Busca disponível em uma próxima fase"
             />
           </label>
-          <Button
-            type="button"
-            variant="outline"
-            size="icon"
-            aria-label="Notificações — em breve"
-            disabled
-          >
-            <Bell />
-          </Button>
+          <div className="relative">
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              aria-label={`Notificações${
+                unreadCount > 0 ? `, ${unreadCount} não lidas` : ""
+              }`}
+              onClick={openCenter}
+            >
+              <Bell />
+            </Button>
+            {unreadCount > 0 && (
+              <span className="pointer-events-none absolute -right-1.5 -top-1.5 flex min-w-5 items-center justify-center rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-bold leading-none text-primary-foreground">
+                {unreadCount > 99 ? "99+" : unreadCount}
+              </span>
+            )}
+          </div>
           <UserAvatar avatar={avatar} name={displayName} />
           <Button
             type="button"

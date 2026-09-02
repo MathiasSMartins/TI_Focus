@@ -18,6 +18,7 @@ import {
   type PrimaryObjectiveId,
   type UserProfile,
 } from "@/features/profile/types/user-profile"
+import { resolveNotificationPreferences } from "@/features/notifications/types/notification"
 import { firestoreDb } from "@/services/firebase"
 
 function getFirestoreInstance(): Firestore {
@@ -197,5 +198,28 @@ export async function completeUserOnboarding({
       timezone,
     },
     updatedAt: serverTimestamp(),
+  })
+}
+
+export async function updateUserNotificationPreferences(
+  uid: string,
+  notifications: UserProfile["settings"]["notifications"],
+  expected: UserProfile["settings"]["notifications"],
+) {
+  await runTransaction(getFirestoreInstance(), async (transaction) => {
+    const reference = getProfileReference(uid)
+    const snapshot = await transaction.get(reference)
+    if (!snapshot.exists()) throw new Error("Perfil não encontrado.")
+    const persisted = resolveNotificationPreferences(
+      snapshot.data().settings.notifications,
+    )
+    const baseline = resolveNotificationPreferences(expected)
+    if (JSON.stringify(persisted) !== JSON.stringify(baseline)) {
+      throw new Error("As preferências foram alteradas em outro dispositivo.")
+    }
+    transaction.update(reference, {
+      "settings.notifications": notifications,
+      updatedAt: serverTimestamp(),
+    })
   })
 }

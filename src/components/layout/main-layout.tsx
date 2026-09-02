@@ -3,6 +3,7 @@ import { Outlet } from "react-router-dom"
 
 import { Header } from "@/components/layout/header"
 import { Sidebar } from "@/components/layout/sidebar"
+import { NotificationCenter } from "@/features/notifications"
 
 export function MainLayout() {
   const [isNavigationOpen, setIsNavigationOpen] = useState(false)
@@ -19,6 +20,7 @@ export function MainLayout() {
           <Outlet />
         </main>
       </div>
+      <NotificationCenter />
     </div>
   )
 }

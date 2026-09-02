@@ -1,6 +1,10 @@
 import type { Timestamp } from "firebase/firestore"
 
 import type { ITAreaId } from "@/config/it-area-config"
+import {
+  DEFAULT_NOTIFICATION_TYPE_PREFERENCES,
+  type NotificationPreferences,
+} from "@/features/notifications/types/notification"
 
 export { IT_AREAS, getAreaLabel } from "@/config/it-area-config"
 export type { ITAreaId } from "@/config/it-area-config"
@@ -25,10 +29,7 @@ export interface UserSettings {
     longBreakMinutes: number
     cyclesBeforeLongBreak: number
   }
-  notifications: {
-    inApp: boolean
-    push: boolean
-  }
+  notifications: NotificationPreferences
 }
 
 export interface UserProfile {
@@ -64,6 +65,7 @@ export const DEFAULT_USER_SETTINGS: UserSettings = {
   notifications: {
     inApp: true,
     push: false,
+    types: DEFAULT_NOTIFICATION_TYPE_PREFERENCES,
   },
 }
 

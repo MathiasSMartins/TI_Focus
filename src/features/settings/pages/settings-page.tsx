@@ -1,4 +1,4 @@
-import { Bell, Database, Palette, Timer } from "lucide-react"
+import { Database, Palette, Timer } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -9,6 +9,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
+import { NotificationPreferencesCard } from "@/features/notifications"
 import { isFirebaseConfigured } from "@/services/firebase"
 
 const settingsGroups = [
@@ -22,11 +23,6 @@ const settingsGroups = [
     title: "Pomodoro",
     description: "Configuração padrão: 25 / 5 / 15 minutos.",
   },
-  {
-    icon: Bell,
-    title: "Notificações",
-    description: "Preferências serão habilitadas em uma próxima fase.",
-  },
 ]
 
 export function SettingsPage() {
@@ -37,11 +33,12 @@ export function SettingsPage() {
           Configurações
         </h2>
         <p className="mt-2 text-sm text-muted-foreground">
-          Base preparada para preferências pessoais, integrações e segurança.
+          Ajuste a experiência, os ciclos de foco e os alertas que ajudam sua
+          rotina.
         </p>
       </section>
 
-      <div className="grid gap-4 lg:grid-cols-3">
+      <div className="grid gap-4 lg:grid-cols-2">
         {settingsGroups.map((group) => {
           const Icon = group.icon
           return (
@@ -52,14 +49,16 @@ export function SettingsPage() {
                 <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
                   {group.description}
                 </p>
-                <Button className="mt-5" size="sm" variant="outline">
-                  Configurar
+                <Button className="mt-5" size="sm" variant="outline" disabled>
+                  Em breve
                 </Button>
               </CardContent>
             </Card>
           )
         })}
       </div>
+
+      <NotificationPreferencesCard />
 
       <Card>
         <CardHeader className="flex-row items-start justify-between gap-4">
